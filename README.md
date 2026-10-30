@@ -8,7 +8,7 @@ Every user is verified, every resource checks eligibility, high-demand equipment
 
 ## Try it (judges)
 
-1. Open the live URL and pick a **"Try as…"** account on the sign-in page. Every password is `Demo@1234`.
+1. Open **https://labloop-9iqv.onrender.com** and pick a **"Try as…"** account on the sign-in page. Every password is `Demo@1234`.
 2. Follow the journey below. If the data gets messy, sign in as **Admin → Reset demo data**.
 
 | Account | Role | Story |
@@ -29,7 +29,7 @@ Every user is verified, every resource checks eligibility, high-demand equipment
 5. **Kavita** → Manage → open the laser-cutter request: Aarav vs Priya ranked by **Fair-Share Score** → approve one → the other is **waitlisted automatically, with the reason**.
 6. **Requester** → booking page → **check out** with checklist + photo (supervised items: Sana confirms).
 7. **Return** with checklist + photo → **Sana** sees before/after side by side → *Pass and close* or *Open an incident* → resolve with an outcome (a person decides; the user can appeal once).
-8. **Admin** → *Run scheduler now* (the seeded camera becomes **overdue**, notifications go out) → *Verify integrity* ✓.
+8. **Admin** → the scheduler runs by itself every 10 minutes, so the seeded camera is already flagged **overdue** and both parties have been notified. *Run scheduler now* forces a pass → *Verify integrity* ✓.
 9. Open any booking as either party: **Complete history** shows every step with its reason and hash.
 
 ## What's inside
