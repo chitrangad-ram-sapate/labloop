@@ -52,7 +52,9 @@ async function load(id: string) {
 /** The one place a booking changes status: checks the state machine, writes the audit row and notifies the requester. */
 async function move(tx: postgres.TransactionSql, actor: Actor | null, b: B, to: BookingStatus, reason: string, extra: Record<string, unknown> = {}) {
   assertTransition(b.status, to);
-  await tx`update bookings set ${tx({ status: to, ...extra } as never)} where id = ${b.id}`;
+  // Decisions keep their reason on the booking so the requester always sees "why" at a glance.
+  const decision = ["APPROVED", "REJECTED", "WAITLISTED", "CANCELLED"].includes(to) ? { decision_reason: reason } : {};
+  await tx`update bookings set ${tx({ status: to, ...decision, ...extra } as never)} where id = ${b.id}`;
   await audit(tx, actor, `booking.${to.toLowerCase()}`, "booking", b.id, reason, { from: b.status });
   if (actor?.id !== b.user_id) await notify(tx, b.user_id, `${b.resource_name}: ${to.replace(/_/g, " ").toLowerCase()}`, reason, `/bookings/${b.id}`);
 }
