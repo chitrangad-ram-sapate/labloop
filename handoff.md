@@ -3,11 +3,25 @@
 **For:** any teammate, or a fresh AI coding session, picking up this project.
 **Read in this order:** this file → `decision.md` → `IMPLEMENTATION_PLAN.md`.
 
-## Where we are (2026-10-30)
-- ✅ Track analysed. Our problem statement: **"Open Campus Labs": one host college (fictional Northfield Institute of Technology) safely lends its idle makerspace, lab equipment and rooms to its own students and to verified outsiders (partner-college students, incubated startups)** (decision D-001, which includes the 6 candidates we compared and the PS text for the submission).
-- ✅ Architecture, data model, state machine, fairness rule, AI scope and timeline all decided (`decision.md` D-002…D-017).
-- ⛔ **No product code written. This is deliberate.** Hackathon rule 2: code only during the 48 h window. Do not scaffold early.
-- 🟡 Open items to settle at kickoff: see `decision.md` D-016 (team size/roles, account owners, API key, repo visibility, exact deadline).
+## Where we are (Fri 30 Oct, 18:30 IST; window closes Sun 1 Nov 10:00)
+- ✅ Problem statement: **"Open Campus Labs"** (decision D-001).
+- ✅ **Live:** https://labloop-9iqv.onrender.com (Render free, Singapore). Repo: https://github.com/chitrangad-ram-sapate/labloop
+- ✅ Full lifecycle built and **verified end to end on production** by `e2e/journey.spec.ts` (3/3 pass). Unit tests: `npm test`.
+- ✅ Database: Supabase `labloop` (ref `ituoqdxzgiahgoyknynf`, Mumbai, account deluludevss@gmail.com). The app connects as least-privilege role `labloop_app` through the **session pooler :5432**. Migrations are in `db/migrations/`.
+- ✅ Scheduler: Supabase `pg_cron` job `labloop-tick` calls `/api/cron/tick` every 10 min (secret in Vault). Results are in `net._http_response`.
+- ✅ AI (Groq) wired in `src/lib/ai.ts` + `ai-jobs.ts`; works locally. **Not active on production until `GROQ_API_KEY` is added in Render.**
+- 🟡 Remaining:
+  - Add `GROQ_API_KEY` in Render (human step).
+  - Private photo storage (needs the Supabase `sb_secret_…` key).
+  - Email-ownership codes at sign-up (needs Gmail app password).
+  - Write the submission document.
+- Stack changes from the plan are listed in `decision.md` D-003a.
+
+### Gotchas learned
+- **Never run `npm run seed` while a deploy is swapping instances.** A killed instance can leave a backend mid-transaction. `labloop_app` now has `statement_timeout=30s`, and the seed uses `lock_timeout=5s`.
+- Use the **session** pooler (5432) for the long-running Render server, not the transaction pooler (6543).
+- Pushing to `main` auto-deploys Render (about 2 min), so don't run e2e during a deploy.
+- Run e2e against prod: `npm run seed && BASE_URL=https://labloop-9iqv.onrender.com npx playwright test`, then `npm run seed` again to reset for judges.
 
 ## Team and ownership (commits are authored by the area owner)
 | Area | Owner | Commit author |
