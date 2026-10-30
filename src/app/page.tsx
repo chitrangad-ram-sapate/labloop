@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { requireActor } from "@/lib/auth";
 import { sql } from "@/lib/db";
+import { findResources } from "@/lib/ai";
 import { rankByQuery } from "@/lib/finder";
 
 type Row = {
@@ -33,7 +34,10 @@ export default async function Catalog({ searchParams }: PageProps<"/">) {
     order by r.high_demand desc, r.name`;
 
   const visible = rows.filter((r) => (!eligibleOnly || r.missing === 0) && (actor.role !== "external" || r.open_to_externals));
-  const results = rankByQuery(visible, q);
+  const ai = q ? await findResources(q, visible.map(({ id, name, category, description, location, requires }) => ({ id, name, category, description, location, requires }))) : null;
+  const byId = new Map(visible.map((r) => [r.id, r]));
+  const aiResults = ai?.matches.flatMap((m) => (byId.has(m.id) ? [{ item: byId.get(m.id)!, why: m.why }] : []));
+  const results = aiResults?.length ? aiResults : rankByQuery(visible, q);
 
   return (
     <div className="space-y-6">
@@ -66,6 +70,9 @@ export default async function Catalog({ searchParams }: PageProps<"/">) {
         <Button type="submit">Search</Button>
       </form>
 
+      {aiResults?.length ? (
+        <p className="text-sm text-muted-foreground">✦ Ranked by AI from your description ({ai!._model}). Eligibility badges are checked by LabLoop&apos;s rules, not the AI.</p>
+      ) : null}
       {results.length === 0 && <p>No resources match. Try fewer words or clear the filters.</p>}
       <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {results.map(({ item: r, why }) => (
@@ -86,7 +93,7 @@ export default async function Catalog({ searchParams }: PageProps<"/">) {
                   {r.requires_supervision && <Badge variant="secondary">Supervised</Badge>}
                   {r.status === "MAINTENANCE" && <Badge variant="destructive">Under maintenance</Badge>}
                 </div>
-                {why && <p className="text-xs text-muted-foreground">{why}</p>}
+                {why && <p className="text-xs text-muted-foreground">{aiResults?.length ? "✦ " : ""}{why}</p>}
               </CardContent>
             </Card>
           </li>

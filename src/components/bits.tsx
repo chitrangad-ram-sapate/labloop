@@ -27,6 +27,16 @@ export function Field({ label, children, hint }: { label: string; children: Reac
   );
 }
 
+/** Every AI output is boxed and labelled as advisory, with the model that produced it. */
+export function AiNote({ title, model, children }: { title: string; model?: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1 rounded-md border border-dashed border-violet-400 bg-violet-50 p-2 text-sm text-violet-950">
+      <p className="text-xs font-semibold uppercase tracking-wide">✦ {title} · AI suggestion, a person decides{model && <span className="font-normal normal-case"> ({model})</span>}</p>
+      {children}
+    </div>
+  );
+}
+
 export function ReasonList({ items, tone }: { items: { message: string; fix?: { label: string; href: string } }[]; tone: "block" | "warn" }) {
   if (!items.length) return null;
   return (
