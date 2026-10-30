@@ -4,18 +4,19 @@ import {
   answerOffer, appeal, cancelBooking, checkOut, decide, decideExtension, inspect, reportIncident, requestExtension, resolveIncident, returnItem,
 } from "@/app/actions/booking";
 import { ActionForm } from "@/components/action-form";
-import { Field, selectCls, Status } from "@/components/bits";
+import { AiNote, Field, selectCls, Status } from "@/components/bits";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { PhotoInput } from "@/components/photo-input";
+import type { AiMeta, ConditionDiff } from "@/lib/ai";
 import { canManage, requireActor } from "@/lib/auth";
 import { getResource, isSupervised } from "@/lib/booking";
 import { sql } from "@/lib/db";
 import { fmt, fmtTime } from "@/lib/format";
 import { PURPOSES, type ScoreLine } from "@/lib/rules";
 
-type Report = { phase: "CHECKOUT" | "RETURN"; checklist: Record<string, string>; photo: string | null; notes: string; created_at: Date; by: string };
+type Report = { phase: "CHECKOUT" | "RETURN"; checklist: Record<string, string>; photo: string | null; notes: string; created_at: Date; by: string; ai_diff: (ConditionDiff & AiMeta) | null };
 
 function Checklist({ items }: { items: string[] }) {
   return (
@@ -63,7 +64,7 @@ export default async function BookingPage({ params }: PageProps<"/bookings/[id]"
   const mine = b.user_id === actor.id;
   if (!staff && !mine) notFound();
 
-  const reports = await sql<Report[]>`select c.phase, c.checklist, c.photo, c.notes, c.created_at, p.full_name as by
+  const reports = await sql<Report[]>`select c.phase, c.checklist, c.photo, c.notes, c.created_at, c.ai_diff, p.full_name as by
     from condition_reports c join profiles p on p.id = c.recorded_by where booking_id = ${id}`;
   const out = reports.find((x) => x.phase === "CHECKOUT");
   const back = reports.find((x) => x.phase === "RETURN");
@@ -223,6 +224,16 @@ export default async function BookingPage({ params }: PageProps<"/bookings/[id]"
                 </tbody>
               </table>
             </div>
+            {back?.ai_diff && (
+              <AiNote title="Condition comparison" model={back.ai_diff._model}>
+                <p>{back.ai_diff.summary}</p>
+                {back.ai_diff.possible_issues.length > 0 && (
+                  <ul className="list-disc pl-5 text-xs">
+                    {back.ai_diff.possible_issues.map((p) => <li key={p.item + p.description}><strong>{p.item}</strong> ({p.confidence} confidence): {p.description}</li>)}
+                  </ul>
+                )}
+              </AiNote>
+            )}
             <div className="grid gap-3 sm:grid-cols-2">
               {[out, back].map((rep, i) => rep && (
                 <figure key={i} className="space-y-1 text-sm">
@@ -257,6 +268,7 @@ export default async function BookingPage({ params }: PageProps<"/bookings/[id]"
               <div key={i.id} className="space-y-2 rounded-lg border p-3 text-sm">
                 <p className="flex flex-wrap items-center gap-2"><Status s={i.status} /> <strong>{i.type}</strong> · {i.severity} · reported by {i.reporter}, {fmt(i.created_at)}</p>
                 <p>{i.description}</p>
+                {i.ai_summary && staff && <AiNote title="Incident summary">{i.ai_summary}</AiNote>}
                 {i.status === "RESOLVED" && <p><strong>Resolution:</strong> {i.resolution} · <strong>Outcome:</strong> {String(i.penalty).replace("_", " ").toLowerCase()}</p>}
                 {i.appeal_status && <p><strong>Appeal ({i.appeal_status.toLowerCase()}):</strong> {i.appeal_text}</p>}
                 {staff && i.status === "OPEN" && (

@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import type postgres from "postgres";
 import { attempt, need, photo, str, type ActionResult } from "@/lib/action";
+import { aiCompareReturn, aiSummariseIncident } from "@/lib/ai-jobs";
 import { canManage, requireActor, type Actor } from "@/lib/auth";
 import { getResource, isSupervised, offerNext, precheck, scoreFor } from "@/lib/booking";
 import { sql } from "@/lib/db";
@@ -150,6 +151,7 @@ export async function returnItem(id: string, _: ActionResult, fd: FormData) {
       await move(tx, actor, b, "RETURNED", issues.length ? `Returned with issues reported: ${issues.join(", ")}` : "Returned; no issues reported.", { returned_at: new Date() });
       await notifyDepartment(tx, b.department_id, `${b.resource_name} returned, please inspect`, issues.length ? `Issues: ${issues.join(", ")}` : "No issues reported", `/bookings/${b.id}`);
     });
+    aiCompareReturn(b.id);
     return "Returned. A lab manager will inspect it and close the booking.";
   });
 }
@@ -160,12 +162,14 @@ export async function inspect(id: string, outcome: "CLOSED" | "DISPUTED", _: Act
     const b = await load(id);
     if (!canManage(actor, b.department_id)) throw new Error("Only this resource's department can inspect it.");
     const note = need(fd, "reason", "an inspection note");
-    await sql.begin(async (tx) => {
+    const incident = await sql.begin(async (tx) => {
       await move(tx, actor, b, outcome, note);
-      if (outcome === "DISPUTED")
-        await tx`insert into incidents (booking_id, resource_id, reported_by, type, severity, description)
-                 values (${b.id}, ${b.resource_id}, ${actor.id}, ${str(fd, "type") || "DAMAGE"}, ${str(fd, "severity") || "LOW"}, ${note})`;
+      if (outcome !== "DISPUTED") return null;
+      const [i] = await tx`insert into incidents (booking_id, resource_id, reported_by, type, severity, description)
+               values (${b.id}, ${b.resource_id}, ${actor.id}, ${str(fd, "type") || "DAMAGE"}, ${str(fd, "severity") || "LOW"}, ${note}) returning id`;
+      return i.id as string;
     });
+    if (incident) aiSummariseIncident(incident);
     return outcome === "CLOSED" ? "Inspection passed; booking closed." : "Incident opened for review.";
   });
 }
@@ -209,12 +213,14 @@ export async function reportIncident(id: string, _: ActionResult, fd: FormData) 
     const actor = await requireActor();
     const b = await load(id);
     if (actor.id !== b.user_id && !canManage(actor, b.department_id)) throw new Error("Only people involved in this booking can report on it.");
-    await sql.begin(async (tx) => {
+    const incident = await sql.begin(async (tx) => {
       const [i] = await tx`insert into incidents (booking_id, resource_id, reported_by, type, severity, description)
         values (${b.id}, ${b.resource_id}, ${actor.id}, ${need(fd, "type")}, ${need(fd, "severity")}, ${need(fd, "description", "what happened")}) returning id`;
       await audit(tx, actor, "incident.reported", "booking", b.id, str(fd, "description"), { incident: i.id, type: str(fd, "type") });
       await notifyDepartment(tx, b.department_id, `Incident reported: ${b.resource_name}`, str(fd, "description"), `/bookings/${b.id}`);
+      return i.id as string;
     });
+    aiSummariseIncident(incident);
     return "Incident reported. A lab manager will review it.";
   });
 }
