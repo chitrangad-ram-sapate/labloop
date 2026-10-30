@@ -66,7 +66,7 @@ export async function seed(sql: postgres.Sql) {
     const neha = await person("neha@nitf.demo", "Neha Joshi", "owner", host.id, dept.MEDIA);
     const aarav = await person("aarav@nitf.demo", "Aarav Mehta", "user", host.id, dept.MECH);
     const rohan = await person("rohan@nitf.demo", "Rohan Das", "user", host.id, dept.CSE);
-    const meera = await person("meera@rce.demo", "Meera Nair", "external", rce.id, null, { identity_status: "PENDING" });
+    await person("meera@rce.demo", "Meera Nair", "external", rce.id, null, { identity_status: "PENDING" });
     const priya = await person("priya@kineticlabs.demo", "Priya Shah", "external", kin.id, null, { identity_status: "VERIFIED", team_code: "KINETIC", id_doc: card("Kinetic Labs", "Incubation letter · Priya Shah") });
     void admin;
 
