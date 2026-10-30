@@ -91,7 +91,8 @@ The track text is an umbrella. Our problem statement must be narrower, but it st
 | DB access | Drizzle ORM | **postgres.js with plain SQL** | Fewer layers. Transactions via `sql.begin`; schema in `db/migrations/*.sql`. |
 | Auth | Supabase Auth | **Own sessions** (scrypt passwords, HMAC-signed httpOnly cookie) | Demo accounts and one-click judge logins need no email round trip. Email-ownership codes are added on top for real sign-ups. |
 | AI | Anthropic | **Groq** (`openai/gpt-oss-120b` for text, `qwen/qwen3.8-27b` for vision), free tier | Key available to the team. Every call is advisory, labelled, and has a non-AI fallback. |
-| Scheduler | Vercel Cron | **GitHub Actions** every 10 min + admin "Run now" button | Free; Vercel Hobby cron is daily only. |
+| Scheduler | Vercel Cron | **Supabase pg_cron + pg_net** every 10 min (secret in Supabase Vault) + admin "Run now" button | Free, needs no extra service, and its calls keep both Render and Supabase awake. |
+| DB login | `postgres` admin user | **Dedicated `labloop_app` role** | Least privilege: the app cannot UPDATE or DELETE audit history. |
 | Next.js | — | **Next 16 with Cache Components** | Per-user parts stream inside `<Suspense>`. |
 
 ## D-004 ✅ Authorization model

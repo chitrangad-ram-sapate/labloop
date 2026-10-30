@@ -52,9 +52,9 @@ Every user is verified, every resource checks eligibility, high-demand equipment
 
 ## Architecture
 
-Next.js (App Router, server components + server actions) on Vercel → Postgres on Supabase (plain SQL via `postgres`).
+Next.js (App Router, server components + server actions) on Render (free tier) → Postgres on Supabase (plain SQL via `postgres`).
 Every state change runs in one transaction: permission check → state-machine check → update → audit row → notification.
-The scheduler (`/api/cron/tick`) runs from a GitHub Actions schedule and from the admin button.
+The scheduler (`/api/cron/tick`) is called every 10 minutes by `pg_cron` in Supabase (secret kept in Supabase Vault) and from the admin button.
 
 ```
 src/lib/rules.ts     state machine + Fair-Share Score (pure, unit-tested)
