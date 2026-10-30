@@ -26,7 +26,7 @@ export default function LoginPage() {
       {demo && (
         <section aria-labelledby="demo" className="space-y-3 rounded-lg border p-4">
           <h2 id="demo" className="font-semibold">Judges: try it as…</h2>
-          <p className="text-sm text-muted-foreground">One click signs you in. Every account's password is <code>{DEMO_PASSWORD}</code>.</p>
+          <p className="text-sm text-muted-foreground">One click signs you in. Every account&apos;s password is <code>{DEMO_PASSWORD}</code>.</p>
           <ul className="grid gap-2 sm:grid-cols-2">
             {DEMO_ACCOUNTS.map((a) => (
               <li key={a.email}>
