@@ -1,4 +1,5 @@
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { unstable_rethrow } from "next/navigation";
 
 export type ActionResult = { error?: string; ok?: string } | null;
@@ -7,8 +8,9 @@ export type ActionResult = { error?: string; ok?: string } | null;
 export async function attempt(fn: () => Promise<string | void>): Promise<ActionResult> {
   try {
     const ok = await fn();
+    if (ok) (await cookies()).set("flash", encodeURIComponent(ok), { path: "/", maxAge: 30 });
     revalidatePath("/", "layout");
-    return ok ? { ok } : null;
+    return null;
   } catch (e) {
     unstable_rethrow(e); // let redirect()/notFound() through
     if ((e as { code?: string }).code === "23P01")
