@@ -14,7 +14,8 @@ export default async function SignupPage() {
       <h1 className="text-2xl font-bold">Create an account</h1>
       <p className="text-sm text-muted-foreground">
         Use your institutional email. Accepted domains: {orgs.map((o) => `@${o.email_domain} (${o.name})`).join(", ")}.
-        Partner users also attach an ID; a host lab manager verifies it before you can book.
+        Partner users also attach an ID; a host lab manager verifies it before you can book. An AI assistant reads the ID to help
+        the manager spot mismatches, but a person makes the decision.
       </p>
       <ActionForm action={signup} submit="Create account">
         <Field label="Full name"><Input name="full_name" required autoComplete="name" /></Field>

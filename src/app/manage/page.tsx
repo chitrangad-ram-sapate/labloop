@@ -1,11 +1,29 @@
 import Link from "next/link";
 import { decideCredential, decideIdentity } from "@/app/actions/verify";
 import { ActionForm } from "@/components/action-form";
-import { Status } from "@/components/bits";
+import { AiNote, Status } from "@/components/bits";
 import { Input } from "@/components/ui/input";
+import type { AiMeta, DocCheck } from "@/lib/ai";
+import { aiEnabled } from "@/lib/ai";
 import { requireActor } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { fmt, fmtTime } from "@/lib/format";
+
+function DocCheckNote({ check }: { check: (DocCheck & AiMeta) | null }) {
+  if (!check) return aiEnabled() ? <p className="text-xs text-muted-foreground">✦ AI document check pending or unavailable for this file. Review it manually.</p> : null;
+  return (
+    <AiNote title="Document check" model={check._model}>
+      <ul className="text-xs">
+        <li>{check.readable ? "✓ Readable" : "✗ Hard to read"}</li>
+        <li>{check.name_matches ? "✓" : "✗"} Name on document: {check.name_on_document || "not found"}</li>
+        <li>{check.matches_expected ? "✓" : "✗"} Issuer / title: {check.issuer_or_title || "not found"}</li>
+        {check.date_on_document && <li>Date: {check.date_on_document}</li>}
+        {check.issues.map((i) => <li key={i}>! {i}</li>)}
+      </ul>
+      <p className="text-xs">{check.summary}</p>
+    </AiNote>
+  );
+}
 
 export default async function Manage() {
   const actor = await requireActor("owner", "manager", "admin");
@@ -21,11 +39,11 @@ export default async function Manage() {
       and (b.status in ('PENDING_REVIEW','RETURNED','OVERDUE','DISPUTED') or b.requested_end_at is not null
            or (b.status = 'APPROVED' and b.start_at < now() + interval '1 day'))
     order by case b.status when 'OVERDUE' then 0 when 'RETURNED' then 1 when 'PENDING_REVIEW' then 2 else 3 end, b.start_at`;
-  const incidents = await sql`select i.id, i.type, i.severity, i.description, i.booking_id, i.appeal_status, r.name from incidents i join resources r on r.id = i.resource_id
+  const incidents = await sql`select i.id, i.type, i.severity, i.description, i.ai_summary, i.booking_id, i.appeal_status, r.name from incidents i join resources r on r.id = i.resource_id
     where i.status = 'OPEN' and (${all} or r.department_id = ${dept}) order by i.created_at`;
-  const idQueue = await sql`select p.id, p.full_name, p.email, p.id_doc, o.name as org, o.agreement_active from profiles p join organizations o on o.id = p.org_id
+  const idQueue = await sql`select p.id, p.full_name, p.email, p.id_doc, p.id_ai_check, o.name as org, o.agreement_active from profiles p join organizations o on o.id = p.org_id
     where p.identity_status = 'PENDING' and p.id_doc is not null order by p.created_at`;
-  const credQueue = await sql`select uc.id, uc.evidence, uc.created_at, ct.name, p.full_name, p.email from user_credentials uc
+  const credQueue = await sql`select uc.id, uc.evidence, uc.ai_check, uc.created_at, ct.name, p.full_name, p.email from user_credentials uc
     join credential_types ct on ct.id = uc.credential_type_id join profiles p on p.id = uc.profile_id where uc.status = 'PENDING' order by uc.created_at`;
   const mine = await sql`select id, name, status, high_demand from resources where ${all} or department_id = ${dept} order by name`;
 
@@ -68,6 +86,7 @@ export default async function Manage() {
                 <li>✓ Email domain matches the partner organisation</li>
                 <li>Check that the name and photo on the ID match this person.</li>
               </ul>
+              <DocCheckNote check={p.id_ai_check} />
               <div className="grid gap-2 sm:grid-cols-2">
                 <ActionForm action={decideIdentity.bind(null, p.id, true)} submit="Verify identity" className="space-y-2">
                   <Input name="reason" required aria-label="Reason" defaultValue="ID matches name and partner college" />
@@ -88,6 +107,7 @@ export default async function Manage() {
             {c.evidence ? <img src={c.evidence} alt={`Certificate from ${c.full_name}`} className="w-full rounded border" /> : <p>No file</p>}
             <div className="space-y-2 text-sm">
               <p><strong>{c.name}</strong> for {c.full_name} ({c.email}) · uploaded {fmt(c.created_at)}</p>
+              <DocCheckNote check={c.ai_check} />
               <div className="grid gap-2 sm:grid-cols-2">
                 <ActionForm action={decideCredential.bind(null, c.id, true)} submit="Verify" className="space-y-2">
                   <Input name="reason" required aria-label="Reason" defaultValue="Certificate checked against induction register" />
@@ -107,6 +127,7 @@ export default async function Manage() {
           {incidents.map((i) => (
             <li key={i.id} className="p-3">
               <Link href={i.booking_id ? `/bookings/${i.booking_id}` : "#"} className="underline">{i.name}</Link>: <strong>{i.type}</strong> ({i.severity.toLowerCase()}) {i.description}
+              {i.ai_summary && <div className="mt-1"><AiNote title="Incident summary">{i.ai_summary}</AiNote></div>}
             </li>
           ))}
         </ul>

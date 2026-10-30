@@ -1,6 +1,7 @@
 "use server";
 
 import { attempt, need, photo, type ActionResult } from "@/lib/action";
+import { aiCheckCredential, aiCheckIdentity } from "@/lib/ai-jobs";
 import { requireActor } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { audit, notify } from "@/lib/log";
@@ -12,13 +13,15 @@ export async function submitCredential(_: ActionResult, fd: FormData) {
     const evidence = photo(fd, "evidence");
     if (!evidence) throw new Error("Attach a photo of your certificate.");
     const typeId = need(fd, "credential_type_id", "which credential");
-    await sql.begin(async (tx) => {
+    const id = await sql.begin(async (tx) => {
       await tx`delete from user_credentials where profile_id = ${actor.id} and credential_type_id = ${typeId} and status <> 'VERIFIED'`;
       const [c] = await tx`insert into user_credentials (profile_id, credential_type_id, status, evidence) values (${actor.id}, ${typeId}, 'PENDING', ${evidence}) returning id`;
       await audit(tx, actor, "credential.submitted", "credential", c.id, "Evidence uploaded for verification");
       await tx`insert into notifications (user_id, title, body, link)
                select id, 'Certificate to verify', ${actor.full_name}, '/manage' from profiles where role = 'manager'`;
+      return c.id as string;
     });
+    aiCheckCredential(id);
     return "Uploaded. A lab manager will verify it.";
   });
 }
@@ -34,6 +37,7 @@ export async function submitIdentity(_: ActionResult, fd: FormData) {
       await tx`insert into notifications (user_id, title, body, link)
                select id, 'External user to verify', ${actor.full_name}, '/manage' from profiles where role = 'manager'`;
     });
+    aiCheckIdentity(actor.id);
     return "Uploaded. A lab manager will verify it.";
   });
 }

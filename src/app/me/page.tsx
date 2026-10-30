@@ -27,7 +27,7 @@ export default async function Passport() {
             Status: <Status s={me.has_doc || me.identity_status !== "PENDING" ? me.identity_status : "NOT_UPLOADED"} />
             {me.identity_reason && <span className="ml-2 text-muted-foreground">“{me.identity_reason}”</span>}
           </p>
-          <p className="text-xs text-muted-foreground">Your ID is visible only to host lab managers, and only for verification.</p>
+          <p className="text-xs text-muted-foreground">Your ID is visible only to host lab managers, and only for verification. An AI assistant reads it to help the manager spot mismatches; it never makes the decision.</p>
           {me.identity_status !== "VERIFIED" && (
             <ActionForm action={submitIdentity} submit={me.has_doc ? "Replace ID" : "Upload ID"}>
               <PhotoInput name="id_doc" label="College ID or incubator letter" required />

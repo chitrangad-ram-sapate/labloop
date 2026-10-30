@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { attempt, need, photo, str, type ActionResult } from "@/lib/action";
+import { aiCheckIdentity } from "@/lib/ai-jobs";
 import { checkPassword, endSession, hashPassword, startSession } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { audit } from "@/lib/log";
@@ -55,6 +56,7 @@ export async function signup(_: ActionResult, fd: FormData) {
       if (e.code === "23505") throw new Error("An account with this email already exists.");
       throw e;
     });
+    if (external) aiCheckIdentity(id);
     await startSession(id);
     redirect("/");
   });
