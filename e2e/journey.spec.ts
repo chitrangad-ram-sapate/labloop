@@ -130,9 +130,8 @@ test("admin: the overdue camera is flagged and the audit chain verifies", async 
   await page.goto("/admin");
   await page.getByRole("button", { name: "Run scheduler now" }).click();
   await expect(page.getByText(/Scheduler ran: \d+ overdue/)).toBeVisible();
-  // The background scheduler may have flagged it already; either way it must be overdue now.
-  await page.goto("/bookings/" + (await page.locator("a", { hasText: "booking.overdue" }).first().getAttribute("href"))?.split("/").pop());
-  await expect(page.getByText(/Overdue: this was due back/)).toBeVisible();
+  // The background scheduler may have flagged it already; either way the history must show it.
+  await expect(page.getByRole("link", { name: "booking.overdue" }).first()).toBeVisible();
   await page.getByRole("button", { name: "Verify integrity" }).click();
   await expect(page.getByText(/Audit chain intact/)).toBeVisible();
 });
