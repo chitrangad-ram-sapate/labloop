@@ -125,11 +125,14 @@ test("competing requests: approving one waitlists the other with a reason", asyn
   await expect(page.getByText(/This time was given to another request/)).toBeVisible();
 });
 
-test("admin: scheduler flags the overdue camera and the audit chain verifies", async ({ page }) => {
+test("admin: the overdue camera is flagged and the audit chain verifies", async ({ page }) => {
   await as(page, "Admin");
   await page.goto("/admin");
   await page.getByRole("button", { name: "Run scheduler now" }).click();
-  await expect(page.getByText(/Scheduler ran: [1-9]\d* overdue/)).toBeVisible();
+  await expect(page.getByText(/Scheduler ran: \d+ overdue/)).toBeVisible();
+  // The background scheduler may have flagged it already; either way it must be overdue now.
+  await page.goto("/bookings/" + (await page.locator("a", { hasText: "booking.overdue" }).first().getAttribute("href"))?.split("/").pop());
+  await expect(page.getByText(/Overdue: this was due back/)).toBeVisible();
   await page.getByRole("button", { name: "Verify integrity" }).click();
   await expect(page.getByText(/Audit chain intact/)).toBeVisible();
 });
