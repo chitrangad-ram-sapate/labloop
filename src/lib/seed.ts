@@ -29,6 +29,7 @@ export async function seed(sql: postgres.Sql) {
   const at = (hoursFromNow: number) => new Date(now + hoursFromNow * H);
 
   await sql.begin(async (tx) => {
+    await tx`set local lock_timeout = '5s'`; // fail fast rather than queue every live request behind the reset
     await tx`truncate audit_log, notifications, incidents, condition_reports, bookings, resource_requirements, resources,
              user_credentials, credential_types, profiles, departments, organizations restart identity cascade`;
 
