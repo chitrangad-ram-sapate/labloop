@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { signup } from "@/app/actions/auth";
 import { ActionForm } from "@/components/action-form";
 import { Field } from "@/components/bits";
@@ -6,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { sql } from "@/lib/db";
 
 export default async function SignupPage() {
+  await connection(); // partner list is live data, not build-time
   const orgs = await sql`select name, kind, email_domain from organizations where agreement_active order by kind, name`;
   return (
     <div className="max-w-lg space-y-4">
