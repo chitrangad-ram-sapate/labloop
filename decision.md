@@ -83,6 +83,17 @@ The track text is an umbrella. Our problem statement must be narrower, but it st
 
 ---
 
+## D-003a ✅ Changes made during the build (supersede D-003 where they differ)
+
+| Area | Planned | Built | Why |
+|---|---|---|---|
+| Hosting | Vercel | **Render free web service** (Singapore) | The whole stack must be free tier. Firebase App Hosting needs the paid Blaze plan. The scheduler's 10-minute ping keeps the free instance awake for judges. |
+| DB access | Drizzle ORM | **postgres.js with plain SQL** | Fewer layers. Transactions via `sql.begin`; schema in `db/migrations/*.sql`. |
+| Auth | Supabase Auth | **Own sessions** (scrypt passwords, HMAC-signed httpOnly cookie) | Demo accounts and one-click judge logins need no email round trip. Email-ownership codes are added on top for real sign-ups. |
+| AI | Anthropic | **Groq** (`openai/gpt-oss-120b` for text, `qwen/qwen3.8-27b` for vision), free tier | Key available to the team. Every call is advisory, labelled, and has a non-AI fallback. |
+| Scheduler | Vercel Cron | **GitHub Actions** every 10 min + admin "Run now" button | Free; Vercel Hobby cron is daily only. |
+| Next.js | — | **Next 16 with Cache Components** | Per-user parts stream inside `<Suspense>`. |
+
 ## D-004 ✅ Authorization model
 
 - Roles: `user` (host-college student/researcher), `external` (partner-college student or startup member; can book only after identity verification), `manager` (lab assistant: verifies credentials, supervises check-in, inspects returns), `owner` (lab in-charge/faculty: lists resources, sets rules, approves), `admin` (policies, disputes, audit).
