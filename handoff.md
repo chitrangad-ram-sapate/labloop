@@ -9,6 +9,14 @@
 - ⛔ **No product code written. This is deliberate.** Hackathon rule 2: code only during the 48 h window. Do not scaffold early.
 - 🟡 Open items to settle at kickoff: see `decision.md` D-016 (team size/roles, account owners, API key, repo visibility, exact deadline).
 
+## Team and ownership (commits are authored by the area owner)
+| Area | Owner | Commit author |
+|---|---|---|
+| A: DB/backend (schema, auth, rules engine, audit) | chitrangad-ram-sapate | `chitrangad-ram-sapate <chitrangadsapate7@gmail.com>` |
+| B: catalog, resource page, booking screens | prabhanjan-beep | `prabhanjan-beep <purohitprabhanjan@gmail.com>` |
+| C: check-out/return, condition, incidents | sadanaasabari-1606 | `sadanaasabari-1606 <sadanaasabari@gmail.com>` |
+| D: AI, QA, docs, deploy | giraseshruti777 | `giraseshruti777 <giraseshruti@gmail.com>` |
+
 ## The one-paragraph brief
 LabLoop is a web app where a host college's department owners list idle resources with conditions (required credentials, supervision, deposit, max duration, checklist). External users from approved partner organisations sign up with their institutional email and are identity-verified by a manager before they can book. Internal and external users find a resource (filters or an AI finder), see exactly which requirements they meet, and request a slot. Hard quotas stop hoarding, and an internal/external share cap keeps either group from crowding out the other. When requests collide, the owner sees an explainable **Fair-Share Score** and decides; the losing requests are waitlisted and auto-offered freed slots. Check-out and return each capture a checklist and photos, and a manager inspects. Damage, delays and conflicts become incidents with human-only penalties and one appeal. Every action lands in a **hash-chained audit log** that both parties can see as a booking timeline.
 
