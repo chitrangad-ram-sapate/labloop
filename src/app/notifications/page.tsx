@@ -2,12 +2,13 @@ import Link from "next/link";
 import { markAllRead } from "@/app/actions/verify";
 import { Button } from "@/components/ui/button";
 import { requireActor } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { fromFirestore, getFirebaseDb } from "@/lib/firebase";
 import { fmt } from "@/lib/format";
 
 export default async function Notifications() {
   const actor = await requireActor();
-  const rows = await sql`select * from notifications where user_id = ${actor.id} order by created_at desc limit 100`;
+  const snapshot = await getFirebaseDb().collection("notifications").where("user_id", "==", actor.id).get();
+  const rows = snapshot.docs.map((doc) => fromFirestore(doc.id, doc.data())).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 100);
   return (
     <div className="max-w-3xl space-y-4">
       <div className="flex items-center justify-between">

@@ -2,16 +2,24 @@ import Link from "next/link";
 import { changeCartQuantity, removeCartItem, submitCart } from "@/app/actions/cart";
 import { ActionForm } from "@/components/action-form";
 import { requireActor } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { fromFirestore, getFirebaseDb } from "@/lib/firebase";
 import { fmt } from "@/lib/format";
 
 export default async function CartPage() {
   const actor = await requireActor();
-  const items = await sql`
-    select c.id, c.quantity, c.start_at, c.end_at, c.purpose_text, c.hold_expires_at,
-      c.hold_expires_at > now() as active, r.id as resource_id, r.name, r.location, r.units_available
-    from cart_items c join resources r on r.id = c.resource_id
-    where c.user_id = ${actor.id} order by c.created_at`;
+  const snapshot = await getFirebaseDb().collection("cart_items").where("user_id", "==", actor.id).get();
+  const items = await Promise.all(snapshot.docs.map(async (doc) => {
+    const cart = fromFirestore(doc.id, doc.data());
+    const resourceDoc = await getFirebaseDb().collection("resources").doc(String(cart.resource_id)).get();
+    const resource = resourceDoc.exists ? resourceDoc.data()! : {};
+    return {
+      id: cart.id, quantity: cart.quantity, start_at: cart.start_at, end_at: cart.end_at, purpose_text: cart.purpose_text,
+      hold_expires_at: cart.hold_expires_at, active: new Date(cart.hold_expires_at).getTime() > Date.now(),
+      resource_id: cart.resource_id, name: resource.name ?? "Unavailable resource", location: resource.location ?? "",
+      units_available: resource.units_available ?? 0, created_at: cart.created_at,
+    };
+  }));
+  items.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
   const activeCount = items.filter((item) => item.active).length;
   return (
     <div className="mx-auto max-w-4xl space-y-6">

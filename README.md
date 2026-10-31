@@ -1,111 +1,105 @@
 # LabLoop
 
-**Open Campus Labs:** a host college safely lends its idle makerspace, lab equipment and rooms to its own students and to verified students and startups from nearby institutions.
+LabLoop is a campus resource sharing app. Students discover equipment and spaces, verify eligibility, hold inventory in a short lived cart, request bookings, and record condition reports. Owners and managers review requests and returns.
 
-Every user is verified, every resource checks eligibility, high-demand equipment is shared by a rule anyone can read, and every hand-off leaves a tamper-evident record.
+## Backend status
 
-> All people, organisations and documents in the demo are fictional.
+The active application data layer is Firebase Admin SDK with Cloud Firestore. PostgreSQL is no longer used by the Next.js routes. Existing files under `db/migrations/` are historical PostgreSQL schema references; they are not Firestore migrations and must not be run against Firebase.
 
-## Try it (judges)
+The app still uses LabLoop's existing server signed sessions and password hashes in Firestore `profiles`; it does not use Firebase Authentication. Firebase Admin credentials are server only. `firestore.rules` denies all direct client access; Admin SDK bypasses those rules, so each server action/page must enforce LabLoop authentication and authorization itself.
 
-1. Open **https://labloop-ierl.onrender.com** and pick a **"Try as…"** account on the sign-in page. Every password is `Demo@1234`.
-2. Follow the journey below. If the data gets messy, sign in as **Admin → Reset demo data**.
+This repository does not create a Firebase project, provision accounts, copy a PostgreSQL database, or populate production data. Do not point the app at an empty Firestore project and expect existing PostgreSQL resources/users to appear. Export and migrate any existing production records before switching the live service.
 
-| Account | Role | Story |
-|---|---|---|
-| meera@rce.demo | External student (Riverside College) | ID not yet verified, missing training |
-| aarav@nitf.demo | Host student | Has laser + 3D printing badges |
-| rohan@nitf.demo | Heavy user | Lots of GPU hours, so loses fair-share ties |
-| priya@kineticlabs.demo | Startup founder (verified external) | Competes with Aarav for the laser cutter |
-| kavita@nitf.demo | Owner, Mechanical Makerspace | Lists resources, approves requests |
-| sana@nitf.demo | Manager, Mechanical Makerspace | Verifies IDs and certificates, supervises, inspects |
-| admin@nitf.demo | Admin | Scheduler, audit integrity, appeals, partners |
+## Firebase Console setup
 
-### Full journey (about 6 minutes)
-1. **Owner (Kavita)** → Manage → *List a resource* (e.g. "Soldering Station", requires *Electrical Safety Level 1*).
-2. **Meera** → search "solder a sensor board" → resource page shows ✗ identity and ✗ credential → *My passport*: upload an ID and a certificate (any photo).
-3. **Manager (Sana)** → Manage → verify Meera's identity and certificate.
-4. **Meera** → request a slot tomorrow.
-5. **Kavita** → Manage → open the laser-cutter request: Aarav vs Priya ranked by **Fair-Share Score** → approve one → the other is **waitlisted automatically, with the reason**.
-6. **Requester** → booking page → **check out** with checklist + photo (supervised items: Sana confirms).
-7. **Return** with checklist + photo → **Sana** sees before/after side by side → *Pass and close* or *Open an incident* → resolve with an outcome (a person decides; the user can appeal once).
-8. **Admin** → the scheduler runs by itself every 10 minutes, so the seeded camera is already flagged **overdue** and both parties have been notified. *Run scheduler now* forces a pass → *Verify integrity* ✓.
-9. Open any booking as either party: **Complete history** shows every step with its reason and hash.
+1. Create or select your project at [Firebase Console](https://console.firebase.google.com/).
+2. In **Build → Firestore Database**, create a Firestore database in the region appropriate for your users. Start in production mode.
+3. In **Project settings → General**, copy the Project ID into `FIREBASE_PROJECT_ID`.
+4. In **Project settings → Service accounts**, generate a private service-account key for the server. Keep it outside the repository. Never put its private key in a `NEXT_PUBLIC_` variable, Git, a screenshot, or chat.
+5. Create `.env.local` in the repository root from `.env.example` and add the Firebase project ID, a unique `SESSION_SECRET`, and local credentials as described below.
+6. Add the same server-only variables to Render's environment settings, then redeploy the service.
 
-## What's inside
+For a **brand-new, empty** Firestore project, also set the one-time `LABLOOP_ADMIN_EMAIL`, `LABLOOP_ADMIN_PASSWORD`, `LABLOOP_ADMIN_NAME`, `LABLOOP_HOST_ORG_NAME`, and `LABLOOP_HOST_EMAIL_DOMAIN` values in `.env.local`, then run `npm.cmd run firebase:bootstrap`. It creates the first admin, host organization, and four departments only when those collections are empty. It refuses to run if identity or organization data already exists. Remove the five `LABLOOP_*` bootstrap values afterward. Never run this against a project with data you need to keep.
 
-| Need from the brief | Where |
-|---|---|
-| Listings with availability, location, rules, conditions | `/resources/[id]`, owner form `/resources/new` |
-| Search / matching | Plain-language finder on `/` (`src/lib/finder.ts`) |
-| Verification | External sign-up by partner domain + ID check; manager-verified credentials with expiry (`/me`, `/manage`) |
-| Eligibility checks | `src/lib/booking.ts → precheck()`: identity, credentials, hours, length, advance window, quotas |
-| Approve / reject / waitlist with reasons | Booking review panel; requests are waitlisted only when the approved request leaves too little inventory capacity |
-| Cart, inventory and TTL holds | `/cart`; 12-minute database holds; `labloop_resource_peak` and a resource-row-locked trigger enforce unit capacity; `/api/cron/tick` expires holds |
-| Combined booking requests | Cart submit creates one booking request group with a per-resource booking item for owner review |
-| Conflicts | A serialized PostgreSQL capacity trigger prevents over-allocation across bookings and active cart holds, including simultaneous approvals |
-| Fair use | Fair-Share Score (`src/lib/rules.ts`), weekly booking and hour caps, cooldown, 30% team cap, external-user share cap, waitlist offers |
-| Trust ID and Trust Stars | `/me` displays a unique Trust ID, verification and training status, and a transparent score derived from returns, condition reports and incidents; owners see the same non-sensitive metrics during review |
-| Check-in/out + Condition Vault | Checklist + photo at both ends, stored with the booking, shown only to the borrower and scoped department staff, and diffed side by side |
-| Customer complaint tickets | Booking-linked issue types, evidence, timestamped message/status history, owner workflows, and optional AI summaries |
-| Damage / delay / incidents | Incidents with human-decided outcomes and one appeal; scheduler flags overdue and no-shows |
-| Notifications | In-app centre; scheduler reminders, overdue, offers |
-| Roles | user, external, manager, owner, admin, scoped to departments (`canManage`) |
-| Owner onboarding | Host users request access at `/owner-access`; an admin review grants the role and department with an audit entry |
-| Audit | Append-only `audit_log`, SHA-256 hash chain computed by a DB trigger, *Verify integrity* button |
-| Privacy | RLS on every table with no client policies; IDs/certificates visible only to verifiers; booking evidence and complaint histories visible only to booking participants and department staff |
+## Local Windows setup
 
-## Architecture
-
-Next.js (App Router, server components + server actions) on Render with PostgreSQL (plain SQL via `postgres`).
-Every state change runs in one transaction: permission check → state-machine check → update → audit row → notification.
-The scheduler (`/api/cron/tick`) can be called every 10 minutes by `pg_cron` with its secret in the database provider's secret vault, and from the admin button. It releases expired cart holds and offers freed capacity to eligible waitlisted requests.
-
-```
-src/lib/rules.ts     state machine + Fair-Share Score (pure, unit-tested)
-src/lib/booking.ts   eligibility, capacity reads, quotas, waitlist offers
-src/lib/trust.ts     private trust metrics and deterministic star calculation
-src/app/actions/cart.ts   serialized cart holds and combined booking requests
-src/lib/tick.ts      scheduler pass
-src/app/actions/*    server actions (all writes)
-db/migrations/       schema, constraints, audit chain
-```
-
-## Database and environment setup
-
-LabLoop requires a real PostgreSQL database. It does not start PostgreSQL itself and does not fall back to sample data. `DATABASE_URL` is server-only; never prefix it with `NEXT_PUBLIC_`.
-
-Create a private local environment file in Windows PowerShell:
+In PowerShell, from the repository directory:
 
 ```powershell
 Copy-Item .env.example .env.local
 notepad .env.local
 ```
 
-Set `DATABASE_URL` to a valid PostgreSQL connection URL and set a unique `SESSION_SECRET`. Set `CRON_SECRET` for the protected cron route. `DEMO_MODE` enables the fictional demo flows. `.env.local` is ignored by Git; never paste real values into chat or commit them.
+For local development, the safer option is to store the downloaded service-account JSON somewhere outside the repo (for example, a private folder under your Windows profile) and set:
 
-Run `npm.cmd run db:check` to test database connectivity and confirm the tables required by migrations `001`–`004` exist. This check does not change the database and never prints the connection URL. The project has no migration ledger or migration CLI, so it cannot infer which SQL migrations have already run.
+```dotenv
+FIREBASE_PROJECT_ID=your-project-id
+GOOGLE_APPLICATION_CREDENTIALS=C:\Users\your-windows-user\private\firebase-admin.json
+SESSION_SECRET=your-own-long-random-session-secret
+CRON_SECRET=your-own-long-random-cron-secret
+LABLOOP_ADMIN_EMAIL=admin@your-campus-domain.edu
+LABLOOP_ADMIN_PASSWORD=your-own-unique-long-password
+LABLOOP_ADMIN_NAME=Your Name
+LABLOOP_HOST_ORG_NAME=Your Campus Name
+LABLOOP_HOST_EMAIL_DOMAIN=your-campus-domain.edu
+```
 
-Inspect the target database before applying any migration. Apply only missing SQL files, once each, in numeric order. Migration `002_app_role_and_scheduler.sql` contains password and cron-secret placeholders; never execute them literally. It also uses `pg_cron`, `pg_net`, and Vault, which may not be available on a plain PostgreSQL installation. Set the app-role password out of band, replace the cron-secret placeholder with the configured secret, and confirm the scheduler URL before applying it.
+These are names and format examples only; replace the values yourself. Keep `.env.local` private. The project `.gitignore` ignores `.env*` files. On Render, set `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_JSON` (the full service-account JSON as a secret environment value), `SESSION_SECRET`, and `CRON_SECRET` in the service's Environment page. Never share the key with me.
 
-`npm run seed` truncates core LabLoop tables before inserting fictional demo data. Use it only on a fresh, disposable demo database, after applying migrations. It now requires both `DEMO_MODE=true` and `ALLOW_DEMO_SEED=true`.
-
-Changing `.env.local` only affects the local server. Production requires the same required variables in the hosting service environment settings, followed by a restart or redeploy.
-
-## Run locally
+After completing the one-time bootstrap settings above, create the initial admin and verify configuration:
 
 ```powershell
 npm.cmd install
-npm.cmd run db:check
+npm.cmd run firebase:bootstrap
+npm.cmd run firebase:check
 npm.cmd run dev
-npm.cmd test
 ```
 
-## Known limitations
-- One host institution; partner organisations are users, not owners.
-- Times are in IST only. Bookings are same-day ranges.
-- Condition and complaint evidence are compressed and stored in Postgres; server pages enforce booking-participant and department access. Move evidence to private object storage before scaling.
-- In demo mode, check-out is allowed before the start time so judges don't have to wait.
+`firebase:check` checks for credentials and Firestore connectivity without printing key material. It lists top-level collections and warns when the core data collections are missing. Restart `next dev` after changing environment variables.
 
-## Disclosure
-Built during the hackathon window. Uses Next.js, React, Tailwind CSS, shadcn/ui (Radix), postgres.js, qrcode, date-fns and Vitest; hosted on Render and PostgreSQL. AI-assisted coding tools were used during development; details are in the submission document.
+## Firestore structure
+
+The application expects documents in these collections, with document IDs matching referenced IDs:
+
+| Collection | Purpose |
+|---|---|
+| `organizations`, `departments` | Campus and department reference data |
+| `profiles`, `email_lookup` | User profiles, password hashes, session identity lookup |
+| `resources`, `resource_requirements`, `credential_types`, `user_credentials` | Resource inventory and eligibility |
+| `cart_items`, `bookings` | Temporary holds and booking lifecycle |
+| `condition_reports`, `incidents` | Before/after Condition Vault and incident review |
+| `complaint_tickets`, `complaint_messages` | Customer issue status and timestamped evidence history |
+| `notifications`, `owner_access_requests`, `audit_log`, `_system/audit_head` | In-app notices, owner onboarding, tamper-evident history |
+
+Reference IDs such as `department_id`, `user_id`, `resource_id`, and `credential_type_id` must point to the corresponding document IDs. Use `firebase.json` to deploy `firestore.rules` and `firestore.indexes.json` after installing/authenticating the Firebase CLI. The rules intentionally prevent browser clients from reading/writing these collections; app access goes through authorized server actions.
+
+The old SQL migrations describe the relational schema and business entities but are not automatically converted. Before production cutover, transform and verify existing Postgres rows, relationships, and photo/evidence data in Firestore. The app does not include a seed/reset command; this avoids accidentally replacing real project data with fictional demo records.
+
+## Deploy Firestore rules and indexes
+
+With the Firebase CLI installed and authenticated to your own project:
+
+```powershell
+firebase login
+firebase use --add
+firebase deploy --only firestore:rules,firestore:indexes
+```
+
+Verify the selected project before deployment. Create the Firestore database in Console first. Add any additional composite index requested by Firestore as usage grows, then commit the generated index definition.
+
+## Run and verify
+
+```powershell
+npm.cmd run lint
+npx.cmd tsc --noEmit
+npm.cmd test
+npm.cmd run build
+```
+
+The application requires a configured Firestore project and pre-existing records before sign-in/catalog/booking flows can be exercised. Do not treat a successful build or connectivity check as proof that real user journeys or production data migration passed.
+
+## Architecture
+
+Next.js App Router, server components and server actions run on Render. `src/lib/firebase.ts` lazily initializes the Firebase Admin SDK so builds do not require live credentials. Firestore transactions serialize inventory changes through each resource's `availability_version`; cart holds expire after 12 minutes, and `/api/cron/tick` releases expired holds and advances booking reminders/offers. All business decisions remain on the server.
+
+The UI includes resource discovery, filters, eligibility messages, cart and combined booking requests, owner review, condition reports, trust summaries, complaints, and audit history. Optional AI summaries are advisory and do not replace human decisions.

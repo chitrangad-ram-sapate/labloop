@@ -3,17 +3,23 @@ import { ActionForm } from "@/components/action-form";
 import { Field, selectCls, Status } from "@/components/bits";
 import { PhotoInput } from "@/components/photo-input";
 import { requireActor } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { fromFirestore, getFirebaseDb } from "@/lib/firebase";
 import { fmt } from "@/lib/format";
 import { getTrustSummary } from "@/lib/trust";
 
 export default async function Passport() {
   const actor = await requireActor();
   const trust = await getTrustSummary(actor.id);
-  const [me] = await sql`select identity_status, identity_reason, id_doc is not null as has_doc from profiles where id = ${actor.id}`;
-  const creds = await sql`select uc.status, uc.decision_reason, uc.expires_at, uc.created_at, ct.name from user_credentials uc
-    join credential_types ct on ct.id = uc.credential_type_id where uc.profile_id = ${actor.id} order by ct.name`;
-  const types = await sql`select id, name, description from credential_types order by name`;
+  const db = getFirebaseDb();
+  const [profile, credentialSnapshot, typeSnapshot] = await Promise.all([
+    db.collection("profiles").doc(actor.id).get(),
+    db.collection("user_credentials").where("profile_id", "==", actor.id).get(),
+    db.collection("credential_types").get(),
+  ]);
+  const credentialTypes = new Map(typeSnapshot.docs.map((doc) => [doc.id, doc.data()]));
+  const me = { identity_status: profile.get("identity_status"), identity_reason: profile.get("identity_reason"), has_doc: Boolean(profile.get("id_doc")) };
+  const creds = credentialSnapshot.docs.map((doc) => fromFirestore(doc.id, doc.data())).map((credential) => ({ ...credential, name: String(credentialTypes.get(String(credential.credential_type_id))?.name ?? "Credential") })).sort((a, b) => a.name.localeCompare(b.name));
+  const types = typeSnapshot.docs.map((doc) => ({ id: doc.id, name: String(doc.get("name")), description: String(doc.get("description") ?? "") })).sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <div className="max-w-3xl space-y-8">

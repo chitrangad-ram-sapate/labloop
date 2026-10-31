@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import type { AiMeta, DocCheck } from "@/lib/ai";
 import { aiEnabled } from "@/lib/ai";
 import { requireActor } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { fromFirestore, getFirebaseDb } from "@/lib/firebase";
 import { fmt, fmtTime } from "@/lib/format";
 
 function DocCheckNote({ check }: { check: (DocCheck & AiMeta) | null }) {
@@ -30,22 +30,39 @@ export default async function Manage() {
   const all = actor.role === "admin";
   const dept = actor.department_id;
 
-  const queue = await sql`
-    select b.id, b.status, b.start_at, b.end_at, b.score, b.purpose_category, b.requested_end_at, r.name, p.full_name, p.role, o.name as org,
-      (select count(*)::int from bookings b2 where b2.resource_id = b.resource_id and b2.id <> b.id and b2.slot && b.slot
-         and b2.status in ('PENDING_REVIEW','APPROVED','OFFERED','IN_USE','OVERDUE')) as conflicts
-    from bookings b join resources r on r.id = b.resource_id join profiles p on p.id = b.user_id join organizations o on o.id = p.org_id
-    where (${all} or r.department_id = ${dept})
-      and (b.status in ('PENDING_REVIEW','RETURNED','OVERDUE','DISPUTED') or b.requested_end_at is not null
-           or (b.status = 'APPROVED' and b.start_at < now() + interval '1 day'))
-    order by case b.status when 'OVERDUE' then 0 when 'RETURNED' then 1 when 'PENDING_REVIEW' then 2 else 3 end, b.start_at`;
-  const incidents = await sql`select i.id, i.type, i.severity, i.description, i.ai_summary, i.booking_id, i.appeal_status, r.name from incidents i join resources r on r.id = i.resource_id
-    where i.status = 'OPEN' and (${all} or r.department_id = ${dept}) order by i.created_at`;
-  const idQueue = await sql`select p.id, p.full_name, p.email, p.id_doc, p.id_ai_check, o.name as org, o.agreement_active from profiles p join organizations o on o.id = p.org_id
-    where p.identity_status = 'PENDING' and p.id_doc is not null order by p.created_at`;
-  const credQueue = await sql`select uc.id, uc.evidence, uc.ai_check, uc.created_at, ct.name, p.full_name, p.email from user_credentials uc
-    join credential_types ct on ct.id = uc.credential_type_id join profiles p on p.id = uc.profile_id where uc.status = 'PENDING' order by uc.created_at`;
-  const mine = await sql`select id, name, status, high_demand from resources where ${all} or department_id = ${dept} order by name`;
+  const db = getFirebaseDb();
+  const [bookingSnap, resourceSnap, profileSnap, orgSnap, incidentSnap, credentialSnap, typeSnap] = await Promise.all([
+    db.collection("bookings").get(), db.collection("resources").get(), db.collection("profiles").get(),
+    db.collection("organizations").get(), db.collection("incidents").get(), db.collection("user_credentials").get(),
+    db.collection("credential_types").get(),
+  ]);
+  const bookings = bookingSnap.docs.map((doc) => fromFirestore(doc.id, doc.data()));
+  const resources = resourceSnap.docs.map((doc) => fromFirestore(doc.id, doc.data()));
+  const profiles = profileSnap.docs.map((doc) => fromFirestore(doc.id, doc.data()));
+  const organizations = orgSnap.docs.map((doc) => fromFirestore(doc.id, doc.data()));
+  const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+  const resourceById = new Map(resources.map((resource) => [resource.id, resource]));
+  const orgById = new Map(organizations.map((org) => [org.id, org]));
+  const now = Date.now();
+  const bookingView = bookings.flatMap((booking) => {
+    const resource = resourceById.get(String(booking.resource_id));
+    const profile = profileById.get(String(booking.user_id));
+    if (!resource || !profile || (!all && resource.department_id !== dept)) return [];
+    const org = orgById.get(String(profile.org_id));
+    if (!(["PENDING_REVIEW", "RETURNED", "OVERDUE", "DISPUTED"].includes(String(booking.status)) || booking.requested_end_at || (booking.status === "APPROVED" && new Date(booking.start_at).getTime() < now + 86_400_000))) return [];
+    const conflicts = bookings.filter((other) => other.id !== booking.id && other.resource_id === booking.resource_id && ["PENDING_REVIEW", "APPROVED", "OFFERED", "IN_USE", "OVERDUE"].includes(String(other.status)) && new Date(other.start_at) < new Date(booking.end_at) && new Date(other.end_at) > new Date(booking.start_at)).length;
+    return [{ ...booking, name: resource.name, full_name: profile.full_name, role: profile.role, org: org?.name ?? "Unknown organisation", conflicts }];
+  }).sort((a, b) => ({ OVERDUE: 0, RETURNED: 1, PENDING_REVIEW: 2 }[String(a.status) as "OVERDUE" | "RETURNED" | "PENDING_REVIEW"] ?? 3) - ({ OVERDUE: 0, RETURNED: 1, PENDING_REVIEW: 2 }[String(b.status) as "OVERDUE" | "RETURNED" | "PENDING_REVIEW"] ?? 3) || new Date(a.start_at).getTime() - new Date(b.start_at).getTime());
+  const incidents = incidentSnap.docs.map((doc) => fromFirestore(doc.id, doc.data())).filter((incident) => incident.status === "OPEN" && (all || resourceById.get(String(incident.resource_id))?.department_id === dept)).map((incident) => ({ ...incident, name: resourceById.get(String(incident.resource_id))?.name ?? "Resource" })).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  const idQueue = profiles.filter((profile) => profile.identity_status === "PENDING" && profile.id_doc).map((profile) => ({ ...profile, org: orgById.get(String(profile.org_id))?.name ?? "Unknown organisation", agreement_active: orgById.get(String(profile.org_id))?.agreement_active ?? false })).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  const credentialTypes = new Map(typeSnap.docs.map((doc) => [doc.id, fromFirestore(doc.id, doc.data())]));
+  const credQueue = credentialSnap.docs.map((doc) => fromFirestore(doc.id, doc.data())).filter((credential) => credential.status === "PENDING").flatMap((credential) => {
+    const profile = profileById.get(String(credential.profile_id));
+    if (!profile) return [];
+    return [{ ...credential, name: credentialTypes.get(String(credential.credential_type_id))?.name ?? "Training certificate", full_name: profile.full_name, email: profile.email }];
+  }).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  const mine = resources.filter((resource) => all || resource.department_id === dept).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const queue = bookingView;
 
   return (
     <div className="space-y-8">

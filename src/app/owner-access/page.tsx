@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { requestOwnerAccess } from "@/app/actions/owner-access";
 import { ActionForm } from "@/components/action-form";
 import { getActor } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { fromFirestore, getFirebaseDb } from "@/lib/firebase";
 
 export default async function OwnerAccessPage() {
   const actor = await getActor();
@@ -12,8 +12,8 @@ export default async function OwnerAccessPage() {
   if (actor.role === "manager") redirect("/manage");
   if (actor.role === "admin") redirect("/admin");
 
-  const [organization] = await sql`select kind from organizations where id = ${actor.org_id}`;
-  if (actor.role === "external" || organization?.kind !== "HOST") {
+  const organization = await getFirebaseDb().collection("organizations").doc(actor.org_id).get();
+  if (actor.role === "external" || organization.get("kind") !== "HOST") {
     return (
       <div className="mx-auto max-w-2xl space-y-5 rounded-2xl border bg-white p-6 shadow-sm sm:p-9">
         <p className="market-eyebrow">RESOURCE OWNERS</p>
@@ -29,11 +29,13 @@ export default async function OwnerAccessPage() {
     );
   }
 
-  const [latest] = await sql`
-    select r.status, r.reason, r.decision_reason, r.created_at, d.name as department
-    from owner_access_requests r join departments d on d.id = r.department_id
-    where r.profile_id = ${actor.id} order by r.created_at desc limit 1`;
-  const departments = await sql`select id, name from departments order by name`;
+  const [requestSnapshot, departmentSnapshot] = await Promise.all([
+    getFirebaseDb().collection("owner_access_requests").where("profile_id", "==", actor.id).get(),
+    getFirebaseDb().collection("departments").get(),
+  ]);
+  const departmentNames = new Map(departmentSnapshot.docs.map((doc) => [doc.id, String(doc.get("name"))]));
+  const latest = requestSnapshot.docs.map((doc) => fromFirestore(doc.id, doc.data())).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 1).map((request) => ({ ...request, department: departmentNames.get(String(request.department_id)) ?? "Department" }))[0];
+  const departments = departmentSnapshot.docs.map((doc) => ({ id: doc.id, name: String(doc.get("name")) })).sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 rounded-2xl border bg-white p-6 shadow-sm sm:p-9">

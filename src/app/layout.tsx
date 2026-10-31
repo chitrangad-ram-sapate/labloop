@@ -6,7 +6,7 @@ import { login, logout } from "@/app/actions/auth";
 import { Flash } from "@/components/flash";
 import { SignInExperience, SignInTrigger } from "@/components/sign-in-experience";
 import { getActor } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { getFirebaseDb } from "@/lib/firebase";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,12 +16,12 @@ export const metadata: Metadata = {
 
 async function Nav() {
   const actor = await getActor();
-  const [{ n: unread }] = actor
-    ? await sql<{ n: number }[]>`select count(*)::int as n from notifications where user_id = ${actor.id} and read_at is null`
-    : [{ n: 0 }];
-  const [{ n: cartCount }] = actor
-    ? await sql<{ n: number }[]>`select count(*)::int as n from cart_items where user_id = ${actor.id} and hold_expires_at > now()`
-    : [{ n: 0 }];
+  const [notifications, cartItems] = actor ? await Promise.all([
+    getFirebaseDb().collection("notifications").where("user_id", "==", actor.id).get(),
+    getFirebaseDb().collection("cart_items").where("user_id", "==", actor.id).get(),
+  ]) : [null, null];
+  const unread = notifications?.docs.filter((doc) => !doc.get("read_at")).length ?? 0;
+  const cartCount = cartItems?.docs.filter((doc) => new Date(doc.get("hold_expires_at")?.toDate?.() ?? doc.get("hold_expires_at")).getTime() > Date.now()).length ?? 0;
   const staff = actor && ["owner", "manager", "admin"].includes(actor.role);
   const links = actor ? [
     { href: "/", label: "Explore resources" },

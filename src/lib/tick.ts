@@ -1,52 +1,108 @@
 import { offerNext } from "./booking";
-import { sql } from "./db";
+import { fromFirestore, getFirebaseDb } from "./firebase";
 import { audit, notify, notifyDepartment } from "./log";
 
-/** Scheduler pass: reminders, no-shows, overdue returns and expired waitlist offers. Safe to run any time. */
+/** Idempotent scheduler pass for expired cart holds, reminders, no-shows, overdue loans and offers. */
 export async function tick() {
-  return sql.begin(async (tx) => {
-    const expiredResources = await tx`select distinct resource_id from cart_items where hold_expires_at <= now() order by resource_id`;
-    if (expiredResources.length) {
-      const ids = expiredResources.map((row) => row.resource_id as string);
-      await tx`select id from resources where id = any(${tx.array(ids, 2950)}) order by id for update`;
+  const db = getFirebaseDb();
+  const now = new Date();
+  const expiredCart = await db.collection("cart_items").where("hold_expires_at", "<=", now).get();
+  const expiredByResource = new Map<string, string[]>();
+  for (const doc of expiredCart.docs) {
+    const resourceId = String(doc.get("resource_id"));
+    expiredByResource.set(resourceId, [...(expiredByResource.get(resourceId) ?? []), doc.id]);
+  }
+  for (const [resourceId, ids] of expiredByResource) {
+    for (let offset = 0; offset < ids.length; offset += 450) {
+      const refs = ids.slice(offset, offset + 450).map((id) => db.collection("cart_items").doc(id));
+      const resourceRef = db.collection("resources").doc(resourceId);
+      await db.runTransaction(async (tx) => {
+        const [resource, ...holds] = await Promise.all([tx.get(resourceRef), ...refs.map((ref) => tx.get(ref))]);
+        holds.forEach((hold) => { if (hold.exists && hold.get("hold_expires_at")?.toDate?.() <= now) tx.delete(hold.ref); });
+        if (resource.exists) tx.update(resourceRef, { availability_version: Number(resource.get("availability_version") ?? 0) + 1 });
+      });
     }
-    const expiredHolds = await tx`delete from cart_items where hold_expires_at <= now() returning resource_id`;
-    const expiredByResource = new Map<string, number>();
-    for (const row of expiredHolds) expiredByResource.set(row.resource_id, (expiredByResource.get(row.resource_id) ?? 0) + 1);
-    for (const [resourceId, count] of expiredByResource) {
-      await audit(tx, null, "cart.hold_expired", "resource", resourceId, `${count} expired cart hold(s) released back to inventory.`);
-      await offerNext(tx, resourceId);
+    await audit(null, null, "cart.hold_expired", "resource", resourceId, `${ids.length} expired cart hold(s) released back to inventory.`);
+    await offerNext(null, resourceId);
+  }
+
+  let reminded = 0;
+  const approved = await db.collection("bookings").where("status", "==", "APPROVED").get();
+  for (const doc of approved.docs) {
+    const booking = fromFirestore(doc.id, doc.data());
+    const start = new Date(booking.start_at);
+    if (booking.reminded_at || start < now || start > new Date(now.getTime() + 60 * 60_000)) continue;
+    const resourceRef = db.collection("resources").doc(String(booking.resource_id));
+    const resource = await resourceRef.get();
+    const didRemind = await db.runTransaction(async (tx) => {
+      const current = await tx.get(doc.ref);
+      if (!current.exists || current.get("status") !== "APPROVED" || current.get("reminded_at")) return false;
+      tx.update(doc.ref, { reminded_at: new Date() });
+      return true;
+    });
+    if (didRemind) {
+      await notify(null, String(booking.user_id), `${resource.get("name") ?? "Your booking"} starts within the hour`, "Remember to record its condition at check-out.", `/bookings/${booking.id}`);
+      reminded++;
     }
+  }
 
-    const reminded = await tx`update bookings b set reminded_at = now() from resources r
-      where r.id = b.resource_id and b.status = 'APPROVED' and b.reminded_at is null and b.start_at between now() and now() + interval '1 hour'
-      returning b.id, b.user_id, r.name`;
-    for (const b of reminded) await notify(tx, b.user_id, `${b.name} starts within the hour`, "Remember to record its condition at check-out.", `/bookings/${b.id}`);
+  let noShows = 0;
+  for (const doc of approved.docs) {
+    const booking = fromFirestore(doc.id, doc.data());
+    if (new Date(booking.start_at) >= new Date(now.getTime() - 15 * 60_000)) continue;
+    const resourceRef = db.collection("resources").doc(String(booking.resource_id));
+    const changed = await db.runTransaction(async (tx) => {
+      const [current, resource] = await Promise.all([tx.get(doc.ref), tx.get(resourceRef)]);
+      if (!current.exists || current.get("status") !== "APPROVED") return false;
+      tx.update(doc.ref, { status: "NO_SHOW" });
+      if (resource.exists) tx.update(resourceRef, { availability_version: Number(resource.get("availability_version") ?? 0) + 1 });
+      return true;
+    });
+    if (!changed) continue;
+    noShows++;
+    await audit(null, null, "booking.no_show", "booking", booking.id, "Not checked out within 15 minutes of the start, so the slot was released. This counts against reliability scoring.");
+    await notify(null, String(booking.user_id), "Marked as no-show", "You didn't check out within 15 minutes of your start time, so the slot was released.", `/bookings/${booking.id}`);
+    await offerNext(null, String(booking.resource_id));
+  }
 
-    const noShows = await tx`update bookings set status = 'NO_SHOW' where status = 'APPROVED' and start_at < now() - interval '15 minutes'
-      returning id, user_id, resource_id`;
-    for (const b of noShows) {
-      await audit(tx, null, "booking.no_show", "booking", b.id, "Not checked out within 15 minutes of the start, so the slot was released. This counts against the reliability part of future Fair-Share Scores.");
-      await notify(tx, b.user_id, "Marked as no-show", "You didn't check out within 15 minutes of your start time, so the slot was released.", `/bookings/${b.id}`);
-      await offerNext(tx, b.resource_id);
-    }
+  let overdue = 0;
+  const inUse = await db.collection("bookings").where("status", "==", "IN_USE").get();
+  for (const doc of inUse.docs) {
+    const booking = fromFirestore(doc.id, doc.data());
+    if (new Date(booking.end_at) >= now) continue;
+    const resource = await db.collection("resources").doc(String(booking.resource_id)).get();
+    const changed = await db.runTransaction(async (tx) => {
+      const current = await tx.get(doc.ref);
+      if (!current.exists || current.get("status") !== "IN_USE") return false;
+      tx.update(doc.ref, { status: "OVERDUE" });
+      return true;
+    });
+    if (!changed) continue;
+    overdue++;
+    await audit(null, null, "booking.overdue", "booking", booking.id, "Not returned by the end time.");
+    await notify(null, String(booking.user_id), `${resource.get("name") ?? "Resource"} is overdue`, "Please return it now and record its condition.", `/bookings/${booking.id}`);
+    await notifyDepartment(null, String(resource.get("department_id")), `${resource.get("name") ?? "Resource"} is overdue`, "The borrower has been reminded.", `/bookings/${booking.id}`);
+  }
 
-    const overdue = await tx`update bookings b set status = 'OVERDUE' from resources r
-      where r.id = b.resource_id and b.status = 'IN_USE' and b.end_at < now() returning b.id, b.user_id, r.name, r.department_id`;
-    for (const b of overdue) {
-      await audit(tx, null, "booking.overdue", "booking", b.id, "Not returned by the end time.");
-      await notify(tx, b.user_id, `${b.name} is overdue`, "Please return it now and record its condition. Repeated late returns are reviewed by staff.", `/bookings/${b.id}`);
-      await notifyDepartment(tx, b.department_id, `${b.name} is overdue`, "The borrower has been reminded.", `/bookings/${b.id}`);
-    }
+  let expiredOffers = 0;
+  const offers = await db.collection("bookings").where("status", "==", "OFFERED").get();
+  for (const doc of offers.docs) {
+    const booking = fromFirestore(doc.id, doc.data());
+    if (!booking.offer_expires_at || new Date(booking.offer_expires_at) >= now) continue;
+    const resourceRef = db.collection("resources").doc(String(booking.resource_id));
+    const changed = await db.runTransaction(async (tx) => {
+      const [current, resource] = await Promise.all([tx.get(doc.ref), tx.get(resourceRef)]);
+      if (!current.exists || current.get("status") !== "OFFERED" || new Date(current.get("offer_expires_at")?.toDate?.() ?? current.get("offer_expires_at")).getTime() >= Date.now()) return false;
+      tx.update(doc.ref, { status: "CANCELLED", decision_reason: "Waitlist offer expired before it was accepted." });
+      if (resource.exists) tx.update(resourceRef, { availability_version: Number(resource.get("availability_version") ?? 0) + 1 });
+      return true;
+    });
+    if (!changed) continue;
+    expiredOffers++;
+    await audit(null, null, "booking.cancelled", "booking", booking.id, "Waitlist offer expired; passed to the next person.");
+    await notify(null, String(booking.user_id), "Waitlist offer expired", "The slot has been offered to the next person.", `/bookings/${booking.id}`);
+    await offerNext(null, String(booking.resource_id));
+  }
 
-    const expired = await tx`update bookings set status = 'CANCELLED', decision_reason = 'Waitlist offer expired before it was accepted.'
-      where status = 'OFFERED' and offer_expires_at < now() returning id, user_id, resource_id`;
-    for (const b of expired) {
-      await audit(tx, null, "booking.cancelled", "booking", b.id, "Waitlist offer expired; passed to the next person.");
-      await notify(tx, b.user_id, "Waitlist offer expired", "The slot has been offered to the next person.", `/bookings/${b.id}`);
-      await offerNext(tx, b.resource_id);
-    }
-
-    return { expiredCartHolds: expiredHolds.length, reminded: reminded.length, noShows: noShows.length, overdue: overdue.length, expiredOffers: expired.length };
-  });
+  return { expiredCartHolds: expiredCart.size, reminded, noShows, overdue, expiredOffers };
 }

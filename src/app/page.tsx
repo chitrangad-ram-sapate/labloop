@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { ArrowDownRight, ArrowRight, ArrowUpRight, Boxes, Cpu, FlaskConical, Laptop, MapPin, Microscope, Printer, Search, ShieldCheck, Users, Workflow } from "lucide-react";
 import { getActor } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { fromFirestore, getFirebaseDb } from "@/lib/firebase";
 import { findResources } from "@/lib/ai";
 import { rankByQuery } from "@/lib/finder";
 import { SignInTrigger } from "@/components/sign-in-experience";
@@ -42,17 +42,38 @@ async function CatalogContent({ searchParams }: { searchParams: PageProps<"/">["
   const category = String(sp.category ?? "");
   const eligibleOnly = sp.eligible === "1";
 
-  const rows = await sql<Row[]>`
-    select r.id, r.name, r.category, r.location, r.description, d.name as dept, r.status, r.high_demand,
-           r.requires_supervision, r.open_to_externals, r.photo,
-           (select count(*)::int from resource_requirements rr where rr.resource_id = r.id and not exists (
-              select 1 from user_credentials uc where uc.profile_id = ${actor?.id ?? null} and uc.credential_type_id = rr.credential_type_id
-              and uc.status = 'VERIFIED' and (uc.expires_at is null or uc.expires_at > now()))) as missing,
-           (select string_agg(ct.name, ', ') from resource_requirements rr join credential_types ct on ct.id = rr.credential_type_id
-              where rr.resource_id = r.id) as requires
-    from resources r join departments d on d.id = r.department_id
-    where r.status <> 'RETIRED' and (${category} = '' or r.category = ${category})
-    order by r.high_demand desc, r.name`;
+  const db = getFirebaseDb();
+  const [resourceSnapshot, requirementSnapshot, credentialTypeSnapshot, departmentSnapshot, userCredentialSnapshot] = await Promise.all([
+    db.collection("resources").get(),
+    db.collection("resource_requirements").get(),
+    db.collection("credential_types").get(),
+    db.collection("departments").get(),
+    actor ? db.collection("user_credentials").where("profile_id", "==", actor.id).where("status", "==", "VERIFIED").get() : Promise.resolve(null),
+  ]);
+  const credentialTypes = new Map(credentialTypeSnapshot.docs.map((doc) => [doc.id, String(doc.get("name"))]));
+  const departments = new Map(departmentSnapshot.docs.map((doc) => [doc.id, String(doc.get("name"))]));
+  const requirements = new Map<string, string[]>();
+  for (const doc of requirementSnapshot.docs) {
+    const resourceId = String(doc.get("resource_id"));
+    requirements.set(resourceId, [...(requirements.get(resourceId) ?? []), String(doc.get("credential_type_id"))]);
+  }
+  const verified = new Set((userCredentialSnapshot?.docs ?? [])
+    .filter((doc) => !doc.get("expires_at") || new Date(doc.get("expires_at").toDate?.() ?? doc.get("expires_at")).getTime() > Date.now())
+    .map((doc) => String(doc.get("credential_type_id"))));
+  const rows = resourceSnapshot.docs
+    .map((doc) => fromFirestore(doc.id, doc.data()))
+    .filter((r) => r.status !== "RETIRED" && (!category || r.category === category))
+    .map((r) => {
+      const requiredIds = requirements.get(r.id) ?? [];
+      return {
+        id: r.id, name: r.name, category: r.category, location: r.location, description: r.description,
+        dept: departments.get(r.department_id) ?? "Campus", status: r.status, high_demand: Boolean(r.high_demand),
+        requires_supervision: Boolean(r.requires_supervision), open_to_externals: Boolean(r.open_to_externals), photo: r.photo ?? null,
+        missing: actor ? requiredIds.filter((id) => !verified.has(id)).length : requiredIds.length,
+        requires: requiredIds.map((id) => credentialTypes.get(id)).filter(Boolean).join(", ") || null,
+      } satisfies Row;
+    })
+    .sort((a, b) => Number(b.high_demand) - Number(a.high_demand) || a.name.localeCompare(b.name));
 
   const identityVerified = actor?.role !== "external" || actor.identity_status === "VERIFIED";
   const visible = rows.filter((r) => (!eligibleOnly || !actor || (r.missing === 0 && identityVerified)) && (actor?.role !== "external" || r.open_to_externals));

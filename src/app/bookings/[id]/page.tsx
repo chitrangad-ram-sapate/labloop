@@ -13,7 +13,7 @@ import { PhotoInput } from "@/components/photo-input";
 import type { AiMeta, ConditionDiff } from "@/lib/ai";
 import { canManage, requireActor } from "@/lib/auth";
 import { getResource, isSupervised } from "@/lib/booking";
-import { sql } from "@/lib/db";
+import { fromFirestore, getFirebaseDb } from "@/lib/firebase";
 import { fmt, fmtTime } from "@/lib/format";
 import { PURPOSES, type ScoreLine } from "@/lib/rules";
 import { getTrustSummary } from "@/lib/trust";
@@ -58,33 +58,65 @@ export default async function BookingPage({ params }: PageProps<"/bookings/[id]"
   const actor = await requireActor();
   const id = (await params).id;
   if (!/^[0-9a-f-]{36}$/.test(id)) notFound();
-  const [b] = await sql`
-    select b.*, p.full_name, p.role as user_role, p.email, o.name as org_name, d.full_name as decided_by_name
-    from bookings b join profiles p on p.id = b.user_id join organizations o on o.id = p.org_id
-    left join profiles d on d.id = b.decided_by where b.id = ${id}`;
-  if (!b) notFound();
-  const r = (await getResource(b.resource_id))!;
+  const db = getFirebaseDb();
+  const bookingDoc = await db.collection("bookings").doc(id).get();
+  if (!bookingDoc.exists) notFound();
+  const rawBooking = fromFirestore(bookingDoc.id, bookingDoc.data()!);
+  const [personDoc, decidedDoc] = await Promise.all([
+    db.collection("profiles").doc(String(rawBooking.user_id)).get(),
+    rawBooking.decided_by ? db.collection("profiles").doc(String(rawBooking.decided_by)).get() : Promise.resolve(null),
+  ]);
+  const person = personDoc.exists ? fromFirestore(personDoc.id, personDoc.data()!) : {};
+  const orgDoc = person.org_id ? await db.collection("organizations").doc(String(person.org_id)).get() : null;
+  const org = orgDoc?.exists ? fromFirestore(orgDoc.id, orgDoc.data()!) : {};
+  const decided = decidedDoc?.exists ? fromFirestore(decidedDoc.id, decidedDoc.data()!) : {};
+  const b = { ...rawBooking, full_name: person.full_name ?? rawBooking.user_name ?? "LabLoop member", user_role: person.role ?? rawBooking.user_role ?? "user", email: person.email ?? "", org_name: org.name ?? rawBooking.org_name ?? "Unknown organisation", decided_by_name: decided.full_name ?? null };
+  const r = await getResource(String(b.resource_id));
+  if (!r) notFound();
   const staff = canManage(actor, r.department_id);
   const mine = b.user_id === actor.id;
   if (!staff && !mine) notFound();
   const trust = staff ? await getTrustSummary(b.user_id) : null;
 
-  const reports = await sql<Report[]>`select c.phase, c.checklist, c.photo, c.notes, c.created_at, c.ai_diff, p.full_name as by
-    from condition_reports c join profiles p on p.id = c.recorded_by where booking_id = ${id}`;
+  const [reportSnap, incidentSnap, complaintSnap, auditSnap, bookingSnap] = await Promise.all([
+    db.collection("condition_reports").where("booking_id", "==", id).get(),
+    db.collection("incidents").where("booking_id", "==", id).get(),
+    db.collection("complaint_tickets").where("booking_id", "==", id).get(),
+    db.collection("audit_log").where("entity_type", "==", "booking").where("entity_id", "==", id).get(),
+    db.collection("bookings").where("resource_id", "==", String(b.resource_id)).get(),
+  ]);
+  const reports: Report[] = await Promise.all(reportSnap.docs.map(async (doc) => {
+    const report = fromFirestore(doc.id, doc.data());
+    const reporter = await db.collection("profiles").doc(String(report.recorded_by)).get();
+    return { ...report, by: reporter.exists ? String(reporter.get("full_name")) : "LabLoop member" } as Report;
+  }));
   const out = reports.find((x) => x.phase === "CHECKOUT");
   const back = reports.find((x) => x.phase === "RETURN");
-  const incidents = await sql`select i.*, p.full_name as reporter from incidents i join profiles p on p.id = i.reported_by where booking_id = ${id} order by created_at`;
-  const complaints = await sql`select id, issue_type, status, ai_summary, created_at from complaint_tickets where booking_id = ${id} order by created_at desc`;
-  const complaintMessages = complaints.length ? await sql`
-    select m.id, m.ticket_id, m.author_id, m.body, m.status, m.evidence, m.created_at, p.full_name as author_name
-    from complaint_messages m left join profiles p on p.id = m.author_id
-    where m.ticket_id = any(${sql.array(complaints.map((x) => x.id as string), 2950)}) order by m.created_at` : [];
-  const timeline = await sql`select a.*, p.full_name from audit_log a left join profiles p on p.id = a.actor_id
-    where entity_type = 'booking' and entity_id = ${id} order by id`;
+  const incidents = await Promise.all(incidentSnap.docs.map(async (doc) => {
+    const incident = fromFirestore(doc.id, doc.data());
+    const reporter = await db.collection("profiles").doc(String(incident.reported_by)).get();
+    return { ...incident, reporter: reporter.exists ? reporter.get("full_name") : "LabLoop member" };
+  }));
+  const complaints = complaintSnap.docs.map((doc) => fromFirestore(doc.id, doc.data())).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const complaintIds = new Set(complaints.map((ticket) => ticket.id));
+  const messageSnaps = await Promise.all(complaints.map((ticket) => db.collection("complaint_messages").where("ticket_id", "==", ticket.id).get()));
+  const complaintMessages = (await Promise.all(messageSnaps.flatMap((snapshot) => snapshot.docs.map(async (doc) => {
+    const message = fromFirestore(doc.id, doc.data());
+    const author = message.author_id ? await db.collection("profiles").doc(String(message.author_id)).get() : null;
+    return { ...message, author_name: author?.exists ? author.get("full_name") : "LabLoop" };
+  })))).filter((message) => complaintIds.has(String(message.ticket_id))).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  const timeline = await Promise.all(auditSnap.docs.map(async (doc) => {
+    const entry = fromFirestore(doc.id, doc.data());
+    const author = entry.actor_id ? await db.collection("profiles").doc(String(entry.actor_id)).get() : null;
+    return { ...entry, full_name: author?.exists ? author.get("full_name") : null };
+  }));
+  timeline.sort((a, b) => Number(a.sequence ?? 0) - Number(b.sequence ?? 0));
   const rivals = staff && ["PENDING_REVIEW", "WAITLISTED"].includes(b.status)
-    ? await sql`select b2.id, b2.status, b2.score, b2.start_at, b2.end_at, b2.quantity, p.full_name from bookings b2 join profiles p on p.id = b2.user_id
-        where b2.resource_id = ${b.resource_id} and b2.id <> ${id} and b2.slot && ${b.slot}
-          and b2.status in ('PENDING_REVIEW','WAITLISTED','APPROVED','OFFERED','IN_USE','OVERDUE') order by b2.score desc nulls last`
+    ? (await Promise.all(bookingSnap.docs.filter((doc) => doc.id !== id && ["PENDING_REVIEW", "WAITLISTED", "APPROVED", "OFFERED", "IN_USE", "OVERDUE"].includes(String(doc.get("status"))) && new Date(doc.get("start_at")).getTime() < new Date(b.end_at).getTime() && new Date(doc.get("end_at")).getTime() > new Date(b.start_at).getTime()).map(async (doc) => {
+      const rival = fromFirestore(doc.id, doc.data());
+      const profile = await db.collection("profiles").doc(String(rival.user_id)).get();
+      return { ...rival, full_name: profile.exists ? profile.get("full_name") : "LabLoop member" };
+    }))).sort((a, b) => Number(b.score ?? -Infinity) - Number(a.score ?? -Infinity))
     : [];
   const conflictAdvice = rivals.length && aiEnabled() ? await explainConflicts(rivals.map((x) => ({
     status: String(x.status), start: new Date(x.start_at).toISOString(), end: new Date(x.end_at).toISOString(),

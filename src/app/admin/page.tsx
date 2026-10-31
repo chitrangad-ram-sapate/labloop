@@ -1,44 +1,76 @@
 import Link from "next/link";
-import { decideAppeal, resetDemo, runScheduler, togglePartner, verifyChain } from "@/app/actions/admin";
+import { decideAppeal, runScheduler, togglePartner, verifyChain } from "@/app/actions/admin";
 import { reviewOwnerAccess } from "@/app/actions/owner-access";
 import { ActionForm } from "@/components/action-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { requireActor } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { fromFirestore, getFirebaseDb } from "@/lib/firebase";
 import { fmt } from "@/lib/format";
 
 export default async function Admin() {
   await requireActor("admin");
-  const demo = process.env.DEMO_MODE === "true";
 
-  // Rule-based usage flags: each one is explainable and only prompts a human to look.
+  const db = getFirebaseDb();
+  const [bookingSnap, profileSnap, resourceSnap, orgSnap, incidentSnap, requestSnap, departmentSnap, auditSnap] = await Promise.all([
+    db.collection("bookings").get(), db.collection("profiles").get(), db.collection("resources").get(),
+    db.collection("organizations").get(), db.collection("incidents").get(), db.collection("owner_access_requests").get(),
+    db.collection("departments").get(), db.collection("audit_log").get(),
+  ]);
+  const bookings = bookingSnap.docs.map((doc) => fromFirestore(doc.id, doc.data()));
+  const profiles = profileSnap.docs.map((doc) => fromFirestore(doc.id, doc.data()));
+  const resources = resourceSnap.docs.map((doc) => fromFirestore(doc.id, doc.data()));
+  const orgs = orgSnap.docs.map((doc) => fromFirestore(doc.id, doc.data()));
+  const incidents = incidentSnap.docs.map((doc) => fromFirestore(doc.id, doc.data()));
+  const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+  const resourceById = new Map(resources.map((resource) => [resource.id, resource]));
+  const now = Date.now();
+  const cancelled = new Map<string, number>();
+  for (const booking of bookings.filter((row) => row.status === "CANCELLED" && now - new Date(row.created_at).getTime() <= 14 * 86_400_000)) cancelled.set(String(booking.user_id), (cancelled.get(String(booking.user_id)) ?? 0) + 1);
+  const lateReturns = new Map<string, number>();
+  for (const incident of incidents.filter((row) => row.type === "DELAY" && now - new Date(row.created_at).getTime() <= 30 * 86_400_000)) lateReturns.set(String(incident.user_id), (lateReturns.get(String(incident.user_id)) ?? 0) + 1);
   const flags = [
-    ...(await sql`select p.full_name as who, count(*)::int as n from bookings b join profiles p on p.id = b.user_id
-        where b.status = 'CANCELLED' and b.created_at > now() - interval '14 days' group by p.full_name having count(*) >= 3`)
-      .map((f) => `${f.who}: ${f.n} cancellations in 14 days`),
-    ...(await sql`select p.full_name as who, count(*)::int as n from audit_log a join bookings b on b.id = a.entity_id join profiles p on p.id = b.user_id
-        where a.action = 'booking.overdue' and a.at > now() - interval '30 days' group by p.full_name having count(*) >= 2`)
-      .map((f) => `${f.who}: ${f.n} late returns in 30 days`),
-    ...(await sql`select b.team_code, r.name, count(distinct b.user_id)::int as users, round(sum(extract(epoch from b.end_at - b.start_at) / 3600)::numeric, 1) as h
-        from bookings b join resources r on r.id = b.resource_id
-        where r.high_demand and b.team_code is not null and b.start_at > now() - interval '7 days' and b.start_at < now() + interval '7 days'
-          and b.status not in ('REJECTED','CANCELLED') group by b.team_code, r.name having count(distinct b.user_id) >= 2`)
-      .map((f) => `Team ${f.team_code}: ${f.users} members hold ${f.h} h of ${f.name} this fortnight (possible proxy booking)`),
+    ...[...cancelled].filter(([, count]) => count >= 3).map(([id, count]) => `${profileById.get(id)?.full_name ?? "A member"}: ${count} cancellations in 14 days`),
+    ...[...lateReturns].filter(([, count]) => count >= 2).map(([id, count]) => `${profileById.get(id)?.full_name ?? "A member"}: ${count} late returns in 30 days`),
+    ...(() => {
+      const teams = new Map<string, { users: Set<string>; hours: number; name: string }>();
+      for (const booking of bookings.filter((row) => row.team_code && !["REJECTED", "CANCELLED"].includes(String(row.status)) && new Date(row.start_at).getTime() > now - 7 * 86_400_000 && new Date(row.start_at).getTime() < now + 7 * 86_400_000)) {
+        const resource = resourceById.get(String(booking.resource_id));
+        if (!resource?.high_demand) continue;
+        const key = `${booking.team_code}:${resource.id}`;
+        const record = teams.get(key) ?? { users: new Set<string>(), hours: 0, name: String(resource.name) };
+        record.users.add(String(booking.user_id));
+        record.hours += (new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime()) / 3_600_000;
+        teams.set(key, record);
+      }
+      return [...teams.entries()].filter(([, value]) => value.users.size >= 2).map(([key, value]) => `Team ${key.split(":")[0]}: ${value.users.size} members hold ${value.hours.toFixed(1)} h of ${value.name} this fortnight (possible proxy booking)`);
+    })(),
   ];
-  const appeals = await sql`select i.id, i.booking_id, i.appeal_text, i.resolution, i.penalty, r.name from incidents i join resources r on r.id = i.resource_id where i.appeal_status = 'PENDING'`;
-  const partners = await sql`select id, name, kind, email_domain, agreement_active from organizations where kind <> 'HOST' order by name`;
-  const ownerRequests = await sql`select r.id, r.reason, r.created_at, p.full_name, p.email, d.name as department
-    from owner_access_requests r join profiles p on p.id = r.profile_id join departments d on d.id = r.department_id
-    where r.status = 'PENDING' order by r.created_at`;
-  const [stats] = await sql`select
-      (select count(*)::int from resources where status = 'ACTIVE') as resources,
-      (select count(*)::int from bookings where status in ('CLOSED','RETURNED')) as completed,
-      (select coalesce(round(sum(extract(epoch from end_at - start_at) / 3600)), 0)::int from bookings where status in ('CLOSED','RETURNED','IN_USE','OVERDUE')) as hours,
-      (select count(distinct user_id)::int from bookings where status in ('CLOSED','RETURNED','IN_USE','OVERDUE','APPROVED')) as people,
-      (select count(*)::int from bookings b join profiles p on p.id = b.user_id where p.role = 'external' and b.status in ('CLOSED','RETURNED','IN_USE','APPROVED')) as external`;
-  const log = await sql`select a.id, a.at, a.action, a.entity_type, a.entity_id, a.reason, a.actor_role, a.hash, p.full_name from audit_log a
-    left join profiles p on p.id = a.actor_id order by a.id desc limit 60`;
+  const appeals = incidents.filter((incident) => incident.appeal_status === "PENDING").map((incident) => ({ ...incident, name: resourceById.get(String(incident.resource_id))?.name ?? "Resource" }));
+  const partners = orgs.filter((org) => org.kind !== "HOST").sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const departments = new Map(departmentSnap.docs.map((doc) => [doc.id, fromFirestore(doc.id, doc.data())]));
+  const ownerRequests = requestSnap.docs.map((doc) => fromFirestore(doc.id, doc.data())).filter((request) => request.status === "PENDING").flatMap((request) => {
+    const profile = profileById.get(String(request.profile_id));
+    if (!profile) return [];
+    return [{ ...request, full_name: profile.full_name, email: profile.email, department: departments.get(String(request.department_id))?.name ?? "Department" }];
+  }).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  const completedStatuses = ["CLOSED", "RETURNED"];
+  const servedStatuses = ["CLOSED", "RETURNED", "IN_USE", "OVERDUE", "APPROVED"];
+  const hoursStatuses = ["CLOSED", "RETURNED", "IN_USE", "OVERDUE"];
+  const stats = {
+    resources: resources.filter((resource) => resource.status === "ACTIVE").length,
+    completed: bookings.filter((booking) => completedStatuses.includes(String(booking.status))).length,
+    hours: Math.round(bookings.filter((booking) => hoursStatuses.includes(String(booking.status))).reduce((sum, booking) => sum + (new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime()) / 3_600_000, 0)),
+    people: new Set(bookings.filter((booking) => servedStatuses.includes(String(booking.status))).map((booking) => booking.user_id)).size,
+    external: bookings.filter((booking) => profileById.get(String(booking.user_id))?.role === "external" && ["CLOSED", "RETURNED", "IN_USE", "APPROVED"].includes(String(booking.status))).length,
+  };
+  const log = await Promise.all(auditSnap.docs.map(async (doc) => {
+    const entry = fromFirestore(doc.id, doc.data());
+    const profile = entry.actor_id ? profileById.get(String(entry.actor_id)) : null;
+    return { ...entry, full_name: profile?.full_name ?? null };
+  }));
+  log.sort((a, b) => Number(b.sequence ?? 0) - Number(a.sequence ?? 0));
+  log.splice(60);
 
   return (
     <div className="space-y-8">
@@ -61,13 +93,6 @@ export default async function Admin() {
           <p className="text-xs text-muted-foreground">Recomputes the hash chain to prove no history entry was edited or deleted.</p>
           <ActionForm action={verifyChain} submit="Verify integrity" />
         </div>
-        {demo && (
-          <div className="space-y-2 rounded-lg border p-4">
-            <h2 className="font-semibold">Demo data</h2>
-            <p className="text-xs text-muted-foreground">Restores the fictional demo world. Signs everyone out.</p>
-            <form action={resetDemo}><Button variant="destructive">Reset demo data</Button></form>
-          </div>
-        )}
       </section>
 
       <section className="space-y-2">

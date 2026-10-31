@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { attempt, need, photo, str, type ActionResult } from "@/lib/action";
 import { aiCheckIdentity } from "@/lib/ai-jobs";
 import { checkPassword, endSession, hashPassword, startSession } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { createHash } from "node:crypto";
+import { fromFirestore, getFirebaseDb, newRecordId } from "@/lib/firebase";
 import { audit } from "@/lib/log";
 
 function safeReturnPath(value: string) {
@@ -19,18 +20,23 @@ function safeReturnPath(value: string) {
 
 export async function login(_: ActionResult, fd: FormData) {
   return attempt(async () => {
-    const [p] = await sql`select id, password_hash from profiles where email = ${need(fd, "email", "your email").toLowerCase()}`;
-    if (!p || !checkPassword(str(fd, "password"), p.password_hash)) throw new Error("Email or password is incorrect.");
-    await startSession(p.id);
+    const email = need(fd, "email", "your email").toLowerCase();
+    const lookup = await getFirebaseDb().collection("email_lookup").doc(emailKey(email)).get();
+    const profileId = lookup.get("profile_id");
+    const p = typeof profileId === "string" ? await getFirebaseDb().collection("profiles").doc(profileId).get() : null;
+    const data = p?.exists ? p.data() : null;
+    if (!data || !checkPassword(str(fd, "password"), String(data.password_hash ?? ""))) throw new Error("Email or password is incorrect.");
+    await startSession(p!.id);
     redirect(safeReturnPath(str(fd, "redirectTo")));
   });
 }
 
 export async function demoLogin(email: string, fd: FormData) {
   if (process.env.DEMO_MODE !== "true") throw new Error("Demo sign-in is disabled.");
-  const [p] = await sql`select id from profiles where email = ${email}`;
-  if (!p) throw new Error("Demo data missing. Ask an admin to reset it.");
-  await startSession(p.id);
+  const lookup = await getFirebaseDb().collection("email_lookup").doc(emailKey(email)).get();
+  const profileId = lookup.get("profile_id");
+  if (typeof profileId !== "string") throw new Error("Demo data missing. Ask an admin to reset it.");
+  await startSession(profileId);
   redirect(safeReturnPath(str(fd, "redirectTo")));
 }
 
@@ -46,28 +52,59 @@ export async function signup(_: ActionResult, fd: FormData) {
     const password = need(fd, "password", "a password");
     if (password.length < 8) throw new Error("Password must be at least 8 characters.");
     const domain = email.split("@")[1] ?? "";
-    const [org] = await sql`select id, kind, agreement_active from organizations where email_domain = ${domain}`;
+    const organizations = await getFirebaseDb().collection("organizations").where("email_domain", "==", domain).limit(1).get();
+    const org = organizations.docs[0] ? fromFirestore(organizations.docs[0].id, organizations.docs[0].data()) : null;
     if (!org) throw new Error(`“${domain}” is not an approved partner domain. Ask your college to sign an agreement with the host.`);
     if (!org.agreement_active) throw new Error("Your organisation's partnership is currently suspended.");
     const external = org.kind !== "HOST";
     const idDoc = photo(fd, "id_doc");
     if (external && !idDoc) throw new Error("Please attach a photo of your college ID or incubator letter.");
 
-    const id = await sql.begin(async (tx) => {
-      const [p] = await tx`insert into profiles (email, password_hash, full_name, role, org_id, identity_status, id_doc, team_code)
-        values (${email}, ${hashPassword(password)}, ${need(fd, "full_name", "your name")}, ${external ? "external" : "user"}, ${org.id},
-                ${external ? "PENDING" : "NOT_REQUIRED"}, ${idDoc}, ${str(fd, "team_code").toUpperCase() || null}) returning id`;
-      await audit(tx, null, "profile.signup", "profile", p.id, external ? "External sign-up; identity awaiting manager verification" : "Host student sign-up");
-      if (external)
-        await tx`insert into notifications (user_id, title, body, link)
-                 select id, 'New external user to verify', ${email}, '/manage' from profiles where role = 'manager'`;
-      return p.id as string;
-    }).catch((e) => {
-      if (e.code === "23505") throw new Error("An account with this email already exists.");
-      throw e;
-    });
+    const db = getFirebaseDb();
+    const id = newRecordId();
+    const emailRef = db.collection("email_lookup").doc(emailKey(email));
+    const profileRef = db.collection("profiles").doc(id);
+    try {
+      await db.runTransaction(async (tx) => {
+        const duplicate = await tx.get(emailRef);
+        if (duplicate.exists) throw new Error("An account with this email already exists.");
+        tx.create(profileRef, {
+          email,
+          password_hash: hashPassword(password),
+          full_name: need(fd, "full_name", "your name"),
+          role: external ? "external" : "user",
+          org_id: org.id,
+          org_name: org.name,
+          org_kind: org.kind,
+          department_id: null,
+          identity_status: external ? "PENDING" : "NOT_REQUIRED",
+          id_doc: idDoc,
+          id_ai_check: null,
+          identity_reason: null,
+          team_code: str(fd, "team_code").toUpperCase() || null,
+          suspended_until: null,
+          trust_id: `LL-${createHash("sha256").update(id).digest("hex").slice(0, 10).toUpperCase()}`,
+          created_at: new Date(),
+        });
+        tx.create(emailRef, { profile_id: id });
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("already exists")) throw error;
+      throw error;
+    }
+    await audit(null, null, "profile.signup", "profile", id, external ? "External sign-up; identity awaiting manager verification" : "Host student sign-up");
+    if (external) {
+      const managers = await db.collection("profiles").where("role", "==", "manager").get();
+      await Promise.all(managers.docs.map((manager) => getFirebaseDb().collection("notifications").add({
+        user_id: manager.id, title: "New external user to verify", body: email, link: "/manage", read_at: null, created_at: new Date(),
+      })));
+    }
     if (external) aiCheckIdentity(id);
     await startSession(id);
     redirect("/");
   });
+}
+
+function emailKey(email: string) {
+  return createHash("sha256").update(email.toLowerCase()).digest("hex");
 }

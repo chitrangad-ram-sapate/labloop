@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // LabLoop currently accesses Firestore only from trusted Next.js server code.
+    // Firebase Admin bypasses these rules; every server action must enforce its own role checks.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

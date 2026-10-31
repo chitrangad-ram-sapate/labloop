@@ -1,23 +1,24 @@
 import Link from "next/link";
 import { Status } from "@/components/bits";
 import { requireActor } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { fromFirestore, getFirebaseDb } from "@/lib/firebase";
 import { fmt, fmtTime } from "@/lib/format";
 
 export default async function MyBookings({ searchParams }: PageProps<"/bookings">) {
   const actor = await requireActor();
   const query = await searchParams;
   const requestId = typeof query.request === "string" && /^[0-9a-f-]{36}$/i.test(query.request) ? query.request : null;
-  const rows = requestId
-    ? await sql`
-        select b.id, b.status, b.start_at, b.end_at, b.decision_reason, b.offer_expires_at, b.quantity, b.request_group_id, r.name
-        from bookings b join resources r on r.id = b.resource_id
-        where b.user_id = ${actor.id} and b.request_group_id = ${requestId}
-        order by b.start_at`
-    : await sql`
-        select b.id, b.status, b.start_at, b.end_at, b.decision_reason, b.offer_expires_at, b.quantity, b.request_group_id, r.name
-        from bookings b join resources r on r.id = b.resource_id where b.user_id = ${actor.id}
-        order by (b.status in ('OFFERED','OVERDUE','IN_USE','APPROVED','PENDING_REVIEW','WAITLISTED')) desc, b.start_at desc`;
+  const snapshot = await getFirebaseDb().collection("bookings").where("user_id", "==", actor.id).get();
+  const rows = (await Promise.all(snapshot.docs.map(async (doc) => {
+    const booking = fromFirestore(doc.id, doc.data());
+    if (requestId && booking.request_group_id !== requestId) return null;
+    const resource = await getFirebaseDb().collection("resources").doc(String(booking.resource_id)).get();
+    return { ...booking, name: resource.get("name") ?? "Unavailable resource" };
+  }))).filter((row): row is NonNullable<typeof row> => Boolean(row));
+  const activeFirst = new Set(["OFFERED", "OVERDUE", "IN_USE", "APPROVED", "PENDING_REVIEW", "WAITLISTED"]);
+  rows.sort((a, b) => requestId
+    ? new Date(a.start_at).getTime() - new Date(b.start_at).getTime()
+    : Number(activeFirst.has(String(b.status))) - Number(activeFirst.has(String(a.status))) || new Date(b.start_at).getTime() - new Date(a.start_at).getTime());
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">My bookings</h1>

@@ -4,11 +4,12 @@ import { ActionForm } from "@/components/action-form";
 import { Field } from "@/components/bits";
 import { PhotoInput } from "@/components/photo-input";
 import { Input } from "@/components/ui/input";
-import { sql } from "@/lib/db";
+import { getFirebaseDb } from "@/lib/firebase";
 
 export default async function SignupPage() {
   await connection(); // partner list is live data, not build-time
-  const orgs = await sql`select name, kind, email_domain from organizations where agreement_active order by kind, name`;
+  const orgSnapshot = await getFirebaseDb().collection("organizations").where("agreement_active", "==", true).get();
+  const orgs = orgSnapshot.docs.map((doc) => doc.data()).sort((a, b) => String(a.kind).localeCompare(String(b.kind)) || String(a.name).localeCompare(String(b.name)));
   return (
     <div className="max-w-lg space-y-4">
       <h1 className="text-2xl font-bold">Create an account</h1>

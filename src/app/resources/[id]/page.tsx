@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { canManage, getActor } from "@/lib/auth";
 import { aiEnabled, explainEligibility } from "@/lib/ai";
 import { getResource, isSupervised, openHoursPerWeek, type Reason } from "@/lib/booking";
-import { sql } from "@/lib/db";
+import { fromFirestore, getFirebaseDb } from "@/lib/firebase";
 import { fmtDay, fmtTime, istDateKey } from "@/lib/format";
 import { MAX_WEEKLY_HIGH_DEMAND_BOOKINGS } from "@/lib/rules";
 
@@ -26,23 +26,36 @@ async function ResourceContent({ params }: { params: PageProps<"/resources/[id]"
   const r = await getResource(id);
   if (!r) notFound();
 
-  const [dept] = await sql`select name from departments where id = ${r.department_id}`;
-  const [owner] = await sql`select full_name from profiles where id = ${r.owner_id}`;
-  const reqs = await sql<{ name: string; description: string; status: string | null; expires_at: Date | null }[]>`
-    select ct.name, ct.description, uc.status, uc.expires_at
-    from resource_requirements rr join credential_types ct on ct.id = rr.credential_type_id
-    left join lateral (select status, expires_at from user_credentials where profile_id = ${actor.id} and credential_type_id = ct.id
-                       order by (status = 'VERIFIED') desc, created_at desc limit 1) uc on true
-    where rr.resource_id = ${r.id}`;
-  const busy = await sql<{ start_at: Date; end_at: Date; status: string; quantity: number }[]>`
-    select start_at, end_at, status, quantity from bookings where resource_id = ${r.id} and status in ('APPROVED','OFFERED','IN_USE','OVERDUE')
-      and end_at > now() and start_at < now() + interval '7 days' order by start_at`;
+  const db = getFirebaseDb();
+  const [deptDoc, ownerDoc, requirementSnap, credentialSnap, busySnap] = await Promise.all([
+    db.collection("departments").doc(r.department_id).get(),
+    db.collection("profiles").doc(r.owner_id).get(),
+    db.collection("resource_requirements").where("resource_id", "==", r.id).get(),
+    db.collection("user_credentials").where("profile_id", "==", actor.id).get(),
+    db.collection("bookings").where("resource_id", "==", r.id).get(),
+  ]);
+  const dept = deptDoc.exists ? fromFirestore(deptDoc.id, deptDoc.data()!) : { name: "Department" };
+  const owner = ownerDoc.exists ? fromFirestore(ownerDoc.id, ownerDoc.data()!) : { full_name: "LabLoop member" };
+  const credentials = credentialSnap.docs.map((doc) => fromFirestore(doc.id, doc.data()));
+  const requirements = requirementSnap.docs.map((doc) => fromFirestore(doc.id, doc.data()));
+  const resolvedReqs = await Promise.all(requirements.map(async (requirement) => {
+    const typeDoc = await db.collection("credential_types").doc(String(requirement.credential_type_id)).get();
+    const type = typeDoc.exists ? fromFirestore(typeDoc.id, typeDoc.data()!) : { name: "Required training", description: "" };
+    const matching = credentials.filter((credential) => credential.credential_type_id === requirement.credential_type_id)
+      .sort((a, b) => Number(b.status === "VERIFIED") - Number(a.status === "VERIFIED") || new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const current = matching[0];
+    return { name: String(type.name), description: String(type.description ?? ""), status: current?.status ?? null, expires_at: current?.expires_at ?? null };
+  }));
+  const reqsForUi = resolvedReqs;
+  const busy = busySnap.docs.map((doc) => fromFirestore(doc.id, doc.data())).filter((booking) =>
+    ["APPROVED", "OFFERED", "IN_USE", "OVERDUE"].includes(String(booking.status)) && new Date(booking.end_at) > new Date() && new Date(booking.start_at) < new Date(Date.now() + 7 * 86_400_000))
+    .sort((a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime());
 
   const blocks: Reason[] = [];
   if (actor.role === "external" && actor.identity_status !== "VERIFIED")
     blocks.push({ code: "IDENTITY", message: "Your ID has not been verified yet.", fix: { label: "Upload or check ID", href: "/me" } });
   if (actor.role === "external" && !r.open_to_externals) blocks.push({ code: "HOST_ONLY", message: "This resource is for host-college students only." });
-  for (const q of reqs)
+  for (const q of reqsForUi)
     if (q.status !== "VERIFIED" || (q.expires_at && new Date(q.expires_at) < new Date()))
       blocks.push({ code: "CRED", message: `Missing “${q.name}”${q.status === "PENDING" ? " (under review)" : ""}.`, fix: q.status === "PENDING" ? undefined : { label: "Upload certificate", href: "/me" } });
   const eligibilityAid = blocks.length && aiEnabled() ? await explainEligibility(blocks.map(({ code, message }) => ({ code, message }))) : null;
@@ -75,12 +88,12 @@ async function ResourceContent({ params }: { params: PageProps<"/resources/[id]"
 
         <div className="space-y-2">
           <h2 className="font-semibold">Eligibility for you</h2>
-          {reqs.length === 0 && actor.role !== "external" && <p className="text-sm">No training required.</p>}
+          {reqsForUi.length === 0 && actor.role !== "external" && <p className="text-sm">No training required.</p>}
           <ul className="space-y-1 text-sm">
             {actor.role === "external" && (
               <li>{actor.identity_status === "VERIFIED" ? "✓" : "✗"} Identity verified by a host lab manager</li>
             )}
-            {reqs.map((q) => (
+            {reqsForUi.map((q) => (
               <li key={q.name}>
                 {q.status === "VERIFIED" ? "✓" : "✗"} {q.name} <span className="text-muted-foreground">— {q.description}</span>
               </li>

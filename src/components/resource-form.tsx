@@ -11,7 +11,7 @@ const D: Partial<Resource> = {
   max_hours_week: 6, cooldown_hours: 0, external_max_pct: 30, units_available: 1, supervise_externals: true, open_to_externals: true, checklist: [], status: "ACTIVE",
 };
 
-export function ResourceForm({ r, credentials, selected }: { r?: Resource; credentials: { id: string; name: string }[]; selected: string[] }) {
+export function ResourceForm({ r, credentials, selected, departments = [], allowDepartment = false }: { r?: Resource; credentials: { id: string; name: string }[]; selected: string[]; departments?: { id: string; name: string }[]; allowDepartment?: boolean }) {
   const v = { ...D, ...r };
   const check = (name: keyof Resource, text: string) => (
     <label className="flex items-center gap-2 text-sm"><input type="checkbox" name={name} defaultChecked={Boolean(v[name])} /> {text}</label>
@@ -27,6 +27,7 @@ export function ResourceForm({ r, credentials, selected }: { r?: Resource; crede
           </select>
         </Field>
       </div>
+      {allowDepartment && !r && <Field label="Department"><select name="department_id" required className={selectCls} defaultValue=""><option value="" disabled>Select a department</option>{departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select></Field>}
       <Field label="Location"><Input name="location" required defaultValue={v.location} /></Field>
       <Field label="Description"><Textarea name="description" rows={2} defaultValue={v.description} /></Field>
       <Field label="Usage rules"><Textarea name="usage_rules" rows={2} defaultValue={v.usage_rules} /></Field>

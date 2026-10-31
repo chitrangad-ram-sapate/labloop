@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { sql } from "./db";
+import { fromFirestore, getFirebaseDb } from "./firebase";
 
 export type Role = "user" | "external" | "manager" | "owner" | "admin";
 export type Actor = {
@@ -52,11 +52,21 @@ export async function getActor(): Promise<Actor | null> {
   const raw = (await cookies()).get(COOKIE)?.value;
   const [id, sig] = raw?.split(".") ?? [];
   if (!id || !sig || sig !== sign(id)) return null;
-  const [actor] = await sql<Actor[]>`
-    select p.id, p.email, p.full_name, p.role, p.org_id, o.name as org_name, p.department_id,
-           p.identity_status, p.team_code, p.suspended_until
-    from profiles p join organizations o on o.id = p.org_id where p.id = ${id}`;
-  return actor ?? null;
+  const snapshot = await getFirebaseDb().collection("profiles").doc(id).get();
+  if (!snapshot.exists) return null;
+  const profile = fromFirestore(snapshot.id, snapshot.data()!);
+  return {
+    id: profile.id,
+    email: profile.email,
+    full_name: profile.full_name,
+    role: profile.role,
+    org_id: profile.org_id,
+    org_name: profile.org_name ?? "",
+    department_id: profile.department_id ?? null,
+    identity_status: profile.identity_status,
+    team_code: profile.team_code ?? null,
+    suspended_until: profile.suspended_until ?? null,
+  };
 }
 
 export async function requireActor(...roles: Role[]): Promise<Actor> {

@@ -2,12 +2,13 @@ import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import QRCode from "qrcode";
 import { requireActor } from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { getFirebaseDb } from "@/lib/firebase";
 
 export default async function Poster({ params }: PageProps<"/r/[token]/poster">) {
   await requireActor("owner", "manager", "admin");
   const token = (await params).token;
-  const [r] = await sql`select name, location from resources where qr_token = ${token}`;
+  const snapshot = await getFirebaseDb().collection("resources").where("qr_token", "==", token).limit(1).get();
+  const r = snapshot.docs[0]?.data();
   if (!r) notFound();
   const h = await headers();
   const url = `${h.get("x-forwarded-proto") ?? "http"}://${h.get("host")}/r/${token}`;
