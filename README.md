@@ -8,7 +8,7 @@ Every user is verified, every resource checks eligibility, high-demand equipment
 
 ## Try it (judges)
 
-1. Open **https://labloop-9iqv.onrender.com** and pick a **"Try as…"** account on the sign-in page. Every password is `Demo@1234`.
+1. Open **https://labloop-ierl.onrender.com** and pick a **"Try as…"** account on the sign-in page. Every password is `Demo@1234`.
 2. Follow the journey below. If the data gets messy, sign in as **Admin → Reset demo data**.
 
 | Account | Role | Story |
