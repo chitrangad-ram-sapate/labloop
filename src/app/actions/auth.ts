@@ -7,21 +7,31 @@ import { checkPassword, endSession, hashPassword, startSession } from "@/lib/aut
 import { sql } from "@/lib/db";
 import { audit } from "@/lib/log";
 
+function safeReturnPath(value: string) {
+  if (!value.startsWith("/") || value.startsWith("//")) return "/";
+  try {
+    const target = new URL(value, "https://labloop.invalid");
+    return target.origin === "https://labloop.invalid" ? `${target.pathname}${target.search}${target.hash}` : "/";
+  } catch {
+    return "/";
+  }
+}
+
 export async function login(_: ActionResult, fd: FormData) {
   return attempt(async () => {
     const [p] = await sql`select id, password_hash from profiles where email = ${need(fd, "email", "your email").toLowerCase()}`;
     if (!p || !checkPassword(str(fd, "password"), p.password_hash)) throw new Error("Email or password is incorrect.");
     await startSession(p.id);
-    redirect("/");
+    redirect(safeReturnPath(str(fd, "redirectTo")));
   });
 }
 
-export async function demoLogin(email: string) {
+export async function demoLogin(email: string, fd: FormData) {
   if (process.env.DEMO_MODE !== "true") throw new Error("Demo sign-in is disabled.");
   const [p] = await sql`select id from profiles where email = ${email}`;
   if (!p) throw new Error("Demo data missing. Ask an admin to reset it.");
   await startSession(p.id);
-  redirect("/");
+  redirect(safeReturnPath(str(fd, "redirectTo")));
 }
 
 export async function logout() {

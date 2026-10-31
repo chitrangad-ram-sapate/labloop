@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { Suspense } from "react";
-import { logout } from "@/app/actions/auth";
+import { login, logout } from "@/app/actions/auth";
 import { Flash } from "@/components/flash";
+import { SignInExperience, SignInTrigger } from "@/components/sign-in-experience";
 import { getActor } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import "./globals.css";
@@ -20,7 +21,7 @@ async function Nav() {
     : [{ n: 0 }];
   const staff = actor && ["owner", "manager", "admin"].includes(actor.role);
   const links = actor ? [
-    { href: "/", label: "Discover" },
+    { href: "/", label: "Explore resources" },
     { href: "/?category=equipment", label: "Laboratories" },
     { href: "/?category=equipment", label: "Equipment" },
     { href: "/?category=space", label: "Workspaces" },
@@ -29,7 +30,7 @@ async function Nav() {
     ...(staff ? [{ href: "/manage", label: "Manage" }] : []),
     ...(actor.role === "admin" ? [{ href: "/admin", label: "Admin" }] : []),
   ] : [
-    { href: "/", label: "Discover" },
+    { href: "/", label: "Explore resources" },
     { href: "/?category=space", label: "Laboratories" },
     { href: "/?category=equipment", label: "Equipment" },
     { href: "/?category=space", label: "Workspaces" },
@@ -46,7 +47,7 @@ async function Nav() {
           <Link href="/notifications" className="nav-notifications" aria-label={`Notifications, ${unread} unread`}>Notifications{unread > 0 && <span>{unread}</span>}</Link>
           <Link href="/me" className="nav-account">{actor.full_name}</Link>
           <form action={logout}><button className="nav-signout">Sign out</button></form>
-        </> : <><Link href="/login#sign-in" className="nav-signin">Sign in</Link><Link href="/signup" className="nav-join">Get started <span aria-hidden="true">↗</span></Link></>}
+        </> : <><SignInTrigger className="nav-signin nav-signin-trigger">Sign in</SignInTrigger><Link href="/signup" className="nav-join">Get started <span aria-hidden="true">↗</span></Link></>}
       </div>
       <details className="mobile-menu">
         <summary aria-label="Open navigation menu"><span className="menu-lines" aria-hidden="true"><i /><i /></span><span>Menu</span></summary>
@@ -57,9 +58,10 @@ async function Nav() {
             <Link href="/notifications">Notifications {unread > 0 && <span className="mobile-unread">{unread}</span>}</Link>
             <span className="mobile-user">{actor.full_name} · {actor.role}</span>
             <form action={logout}><button className="nav-signout">Sign out</button></form>
-          </> : <><Link href="/login#sign-in" className="mobile-signin">Sign in</Link><Link href="/signup" className="nav-join">Get started <span aria-hidden="true">↗</span></Link></>}
+          </> : <><SignInTrigger className="mobile-signin mobile-signin-trigger">Sign in</SignInTrigger><Link href="/signup" className="nav-join">Get started <span aria-hidden="true">↗</span></Link></>}
         </div>
       </details>
+      {!actor && <SignInExperience authenticated={false} loginAction={login} />}
     </>
   );
 }

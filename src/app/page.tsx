@@ -5,6 +5,7 @@ import { getActor } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { findResources } from "@/lib/ai";
 import { rankByQuery } from "@/lib/finder";
+import { SignInTrigger } from "@/components/sign-in-experience";
 
 type Row = {
   id: string; name: string; category: string; location: string; description: string; dept: string; status: string;
@@ -60,8 +61,6 @@ async function CatalogContent({ searchParams }: { searchParams: PageProps<"/">["
   const aiResults = ai?.matches.flatMap((m) => (byId.has(m.id) ? [{ item: byId.get(m.id)!, why: m.why }] : []));
   const results = aiResults?.length ? aiResults : rankByQuery(visible, q);
   const canList = actor?.role === "owner" || actor?.role === "admin";
-  const ownerSignInHref = "/login#sign-in";
-
   return (
     <div className="marketplace-page">
       {actor?.role === "external" && actor.identity_status !== "VERIFIED" && (
@@ -93,7 +92,9 @@ async function CatalogContent({ searchParams }: { searchParams: PageProps<"/">["
           </form>
           <div className="market-hero-actions">
             <a className="button-primary" href="#resources">Explore resources <ArrowDownRight size={17} /></a>
-            <Link className="button-text" href={canList ? "/resources/new" : ownerSignInHref}>{canList ? "List a resource" : "For lab owners"} <ArrowUpRight size={15} /></Link>
+            <Link className="button-text" href="#how-it-works">How LabLoop works <ArrowUpRight size={15} /></Link>
+            {!canList && <SignInTrigger className="button-text" returnTo="/resources/new">For lab owners <ArrowUpRight size={15} /></SignInTrigger>}
+            {canList && <Link className="button-text" href="/resources/new">List a resource <ArrowUpRight size={15} /></Link>}
           </div>
           <div className="market-trust-line"><ShieldCheck size={17} /> Verified access <span /> Clear booking rules <span /> Accountable hand-offs</div>
         </div>
@@ -158,7 +159,7 @@ async function CatalogContent({ searchParams }: { searchParams: PageProps<"/">["
 
       <section className="listing-cta" aria-labelledby="listing-title">
         <div><p className="market-eyebrow">FOR LABS, COLLEGES & RESOURCE OWNERS</p><h2 id="listing-title">Make your resources work harder.</h2><p>Share underused campus equipment and spaces with people who are ready to put them to good use.</p></div>
-        <Link className="button-primary" href={canList ? "/resources/new" : ownerSignInHref}>{canList ? "List your resource" : "Owner sign in"} <ArrowRight size={17} /></Link>
+        {canList ? <Link className="button-primary" href="/resources/new">List your resource <ArrowRight size={17} /></Link> : <SignInTrigger className="button-primary" returnTo="/resources/new">Owner sign in <ArrowRight size={17} /></SignInTrigger>}
       </section>
     </div>
   );

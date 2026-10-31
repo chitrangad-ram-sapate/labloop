@@ -1,13 +1,13 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { requestBooking } from "@/app/actions/booking";
 import { ActionForm } from "@/components/action-form";
 import { Field, ReasonList, selectCls } from "@/components/bits";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { canManage, requireActor } from "@/lib/auth";
+import { canManage, getActor } from "@/lib/auth";
 import { getResource, isSupervised, openHoursPerWeek, type Reason } from "@/lib/booking";
 import { sql } from "@/lib/db";
 import { fmtDay, fmtTime, istDateKey } from "@/lib/format";
@@ -22,8 +22,10 @@ export default function ResourcePage({ params }: PageProps<"/resources/[id]">) {
 }
 
 async function ResourceContent({ params }: { params: PageProps<"/resources/[id]">["params"] }) {
-  const actor = await requireActor();
-  const r = await getResource((await params).id);
+  const { id } = await params;
+  const actor = await getActor();
+  if (!actor) redirect(`/login?redirectTo=${encodeURIComponent(`/resources/${id}`)}`);
+  const r = await getResource(id);
   if (!r) notFound();
 
   const [dept] = await sql`select name from departments where id = ${r.department_id}`;

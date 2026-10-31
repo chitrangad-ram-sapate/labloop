@@ -302,3 +302,110 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* Deep-indigo discovery surface with restrained grid and ambient light. */
+.market-hero {
+  position: relative;
+  isolation: isolate;
+  border-color: rgb(130 148 244 / 26%);
+  background:
+    radial-gradient(ellipse at 8% 6%, rgb(86 96 223 / 22%), transparent 42%),
+    linear-gradient(118deg, #10172f 0%, #111a38 56%, #171b42 100%);
+  box-shadow: 0 24px 70px rgb(22 27 66 / 18%);
+}
+.market-hero::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background-image: linear-gradient(rgb(173 187 255 / 4%) 1px, transparent 1px), linear-gradient(90deg, rgb(173 187 255 / 4%) 1px, transparent 1px);
+  background-position: center;
+  background-size: 36px 36px;
+  content: "";
+  mask-image: linear-gradient(90deg, #000 0%, transparent 85%);
+  pointer-events: none;
+}
+.market-hero > * { position: relative; z-index: 1; }
+.market-hero .market-eyebrow { color: #aeb8ff; }
+.market-hero .eyebrow-dot { background: #68d9e8; box-shadow: 0 0 0 4px rgb(104 217 232 / 14%), 0 0 18px rgb(104 217 232 / 56%); }
+.market-hero h1 { color: #f7f8ff; }
+.market-hero h1 span { color: #aeb9ff; background: linear-gradient(90deg, #b4bdff, #79e0e8); background-clip: text; -webkit-text-fill-color: transparent; }
+.market-hero .market-intro { color: #c2c9df; }
+.market-hero .market-trust-line { color: #c5cce0; }
+.market-hero .market-trust-line > svg { color: #73ded0; }
+.market-hero .market-trust-line > span { background: #697596; }
+.market-hero .button-primary { border-color: #8e9bff; background: linear-gradient(110deg, #6878f5, #775ce6); box-shadow: 0 8px 22px rgb(84 82 224 / 32%); }
+.market-hero .button-primary:hover { background: linear-gradient(110deg, #7685ff, #886ff4); box-shadow: 0 12px 26px rgb(84 82 224 / 42%); }
+.market-hero .button-text { color: #d3d9ff; }
+.market-hero .button-text:hover { color: #fff; }
+.market-hero-visual { border: 1px solid rgb(191 201 255 / 24%); box-shadow: 0 18px 48px rgb(0 0 0 / 22%); }
+.category-card, .resource-card, .step-card { transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease; }
+.category-card:hover, .resource-card:hover, .step-card:hover { border-color: #c6caff; box-shadow: 0 16px 34px rgb(44 52 121 / 10%); }
+.listing-cta { border-color: #d8dcfa; background: radial-gradient(ellipse at 90% 10%, rgb(134 123 242 / 13%), transparent 42%), linear-gradient(110deg, #eff1ff, #fafaff 62%, #eef8fb); }
+.button-text { border: 0; padding: 0; background: transparent; font: inherit; cursor: pointer; }
+.nav-signin-trigger { padding: .6rem .2rem; border: 0; background: transparent; color: #53607b; font: inherit; font-size: .79rem; font-weight: 580; cursor: pointer; transition: color .18s ease; }
+.nav-signin-trigger:hover { color: #3f53ce; }
+.mobile-signin-trigger { display: flex; width: 100%; padding: .7rem; border: 0; background: transparent; color: #44516e; text-align: left; font: inherit; font-size: .8rem; cursor: pointer; }
+.mobile-signin-trigger:hover { background: #f2f4ff; color: #4358c9; }
+
+.signin-overlay {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgb(4 8 23 / 72%);
+  backdrop-filter: blur(12px);
+  animation: signin-fade-in .24s ease both;
+}
+.signin-dialog {
+  position: relative;
+  width: min(100%, 29rem);
+  max-height: min(92dvh, 52rem);
+  overflow: auto;
+  padding: clamp(1.4rem, 4vw, 2.25rem);
+  border: 1px solid rgb(166 178 255 / 25%);
+  border-radius: 1.35rem;
+  background: radial-gradient(ellipse at 100% 0%, rgb(105 88 230 / 20%), transparent 39%), linear-gradient(145deg, #111832, #0c1226 72%);
+  color: #f5f6ff;
+  box-shadow: 0 32px 100px rgb(0 0 0 / 42%), 0 0 45px rgb(97 101 234 / 13%);
+  animation: signin-rise-in .28s cubic-bezier(.2, .75, .25, 1) both;
+}
+.signin-close { position: absolute; top: 1rem; right: 1rem; display: grid; width: 2.35rem; height: 2.35rem; place-items: center; border: 1px solid rgb(187 197 255 / 18%); border-radius: .7rem; background: rgb(255 255 255 / 5%); color: #dbe0f8; cursor: pointer; transition: background .18s ease, color .18s ease; }
+.signin-close:hover { background: rgb(255 255 255 / 12%); color: white; }
+.signin-dialog-brand { display: flex; align-items: center; gap: .65rem; color: white; font-size: 1.15rem; font-weight: 780; letter-spacing: -.06em; }
+.signin-dialog-brand .brand-mark { width: 2rem; height: 2rem; }
+.signin-dialog-brand .brand-period { color: #82dce9; }
+.signin-dialog-eyebrow { margin: 2.25rem 0 .55rem; color: #aeb8ff; font-size: .65rem; font-weight: 760; letter-spacing: .14em; }
+.signin-dialog h2 { margin: 0; color: #fff; font-size: clamp(2rem, 7vw, 2.6rem); font-weight: 690; letter-spacing: -.06em; line-height: 1.08; }
+.signin-dialog-copy { margin: .7rem 0 1.5rem; color: #b9c1d9; font-size: .86rem; line-height: 1.65; }
+.signin-dialog-form { display: grid; gap: .58rem; }
+.signin-dialog-form label { margin-top: .3rem; color: #d4daf0; font-size: .73rem; font-weight: 650; }
+.signin-dialog-form > input:not([type="hidden"]), .signin-password-wrap > input { width: 100%; min-width: 0; height: 3rem; padding: 0 .85rem; border: 1px solid rgb(173 185 237 / 23%); border-radius: .72rem; background: rgb(255 255 255 / 5%); color: white; font-size: .85rem; outline: none; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease; }
+.signin-dialog-form input::placeholder { color: #828da9; }
+.signin-dialog-form input:focus-visible { border-color: #8e9cff; background: rgb(255 255 255 / 8%); box-shadow: 0 0 0 3px rgb(126 139 255 / 20%); }
+.signin-password-wrap { position: relative; display: block; }
+.signin-password-wrap > input { padding-right: 3.1rem; }
+.password-visibility { position: absolute; top: 50%; right: .45rem; display: grid; width: 2.1rem; height: 2.1rem; place-items: center; transform: translateY(-50%); border: 0; border-radius: .5rem; background: transparent; color: #aab4d1; cursor: pointer; }
+.password-visibility:hover { background: rgb(255 255 255 / 8%); color: white; }
+.signin-error { margin: .25rem 0; padding: .65rem .75rem; border: 1px solid rgb(255 132 150 / 36%); border-radius: .65rem; background: rgb(163 46 69 / 18%); color: #ffc3cb; font-size: .75rem; line-height: 1.5; }
+.signin-submit { display: flex; min-height: 3.1rem; align-items: center; justify-content: center; gap: .55rem; margin-top: .45rem; border: 1px solid #a8b2ff; border-radius: .72rem; background: linear-gradient(105deg, #6878f5, #795fe6); color: white; font-size: .82rem; font-weight: 700; cursor: pointer; box-shadow: 0 9px 24px rgb(83 82 222 / 28%); transition: transform .18s ease, filter .18s ease; }
+.signin-submit:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.1); }
+.signin-submit:disabled { cursor: wait; opacity: .65; }
+.signin-create { margin: 1.1rem 0 .4rem; color: #aeb8d1; font-size: .75rem; text-align: center; }
+.signin-create a { color: #b6c2ff; font-weight: 680; text-underline-offset: 3px; }
+.signin-create a:hover { color: white; }
+.signin-explore { display: flex; align-items: center; justify-content: center; gap: .4rem; margin: .9rem auto 0; padding: .45rem .6rem; border: 0; background: transparent; color: #c8d0e7; font-size: .75rem; cursor: pointer; }
+.signin-explore:hover { color: white; }
+@keyframes signin-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes signin-rise-in { from { opacity: 0; transform: translateY(10px) scale(.975); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+@media (max-width: 600px) {
+  .signin-overlay { align-items: end; padding: 0; }
+  .signin-dialog { width: 100%; max-height: min(92dvh, 46rem); padding: 1.5rem 1.25rem max(1.2rem, env(safe-area-inset-bottom)); border-radius: 1.25rem 1.25rem 0 0; animation-name: signin-sheet-in; }
+  .signin-dialog-eyebrow { margin-top: 1.75rem; }
+  @keyframes signin-sheet-in { from { opacity: .7; transform: translateY(22px); } to { opacity: 1; transform: translateY(0); } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .signin-overlay, .signin-dialog { animation-duration: .01ms; }
+}

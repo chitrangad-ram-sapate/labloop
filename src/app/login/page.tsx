@@ -22,7 +22,11 @@ const categories = [
   { title: "Prototyping equipment", icon: Boxes, filter: "equipment" },
 ];
 
-export default function LoginPage() {
+export default async function LoginPage({ searchParams }: PageProps<"/login">) {
+  const { redirectTo: requestedRedirect } = await searchParams;
+  const redirectTo = typeof requestedRedirect === "string" && requestedRedirect.startsWith("/") && !requestedRedirect.startsWith("//")
+    ? requestedRedirect
+    : "/";
   const demo = process.env.DEMO_MODE === "true";
 
   return (
@@ -46,6 +50,7 @@ export default function LoginPage() {
           <aside id="sign-in" className="access-card" aria-labelledby="signin-title">
             <div className="access-card-heading"><span className="access-icon"><ShieldCheck size={20} /></span><div><p className="market-eyebrow">YOUR WORKSPACE AWAITS</p><h2 id="signin-title">Welcome back</h2></div></div>
             <ActionForm action={login} submit="Sign in to LabLoop" className="signin-form">
+              <input type="hidden" name="redirectTo" value={redirectTo} />
               <Field label="College email"><Input name="email" type="email" autoComplete="email" placeholder="you@college.edu" required /></Field>
               <Field label="Password"><Input name="password" type="password" autoComplete="current-password" placeholder="Enter your password" required /></Field>
             </ActionForm>
@@ -54,7 +59,7 @@ export default function LoginPage() {
               <summary>Explore with a demo account <span aria-hidden="true">+</span></summary>
               <div className="demo-content">
                 <p>Choose a role to enter the demo. Password: <code>{DEMO_PASSWORD}</code></p>
-                <ul>{DEMO_ACCOUNTS.map((account) => <li key={account.email}><form action={demoLogin.bind(null, account.email)}><button type="submit"><span><strong>{account.label}</strong><small>{account.hint}</small></span><span aria-hidden="true">↗</span></button></form></li>)}</ul>
+                <ul>{DEMO_ACCOUNTS.map((account) => <li key={account.email}><form action={demoLogin.bind(null, account.email)}><input type="hidden" name="redirectTo" value={redirectTo} /><button type="submit"><span><strong>{account.label}</strong><small>{account.hint}</small></span><span aria-hidden="true">↗</span></button></form></li>)}</ul>
               </div>
             </details>}
           </aside>
