@@ -1,10 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, ArrowUpRight, Boxes, Cpu, FlaskConical, Laptop, Microscope, Printer, Search, ShieldCheck, Workflow } from "lucide-react";
-import { demoLogin, login } from "@/app/actions/auth";
-import { ActionForm } from "@/components/action-form";
-import { Field } from "@/components/bits";
-import { Input } from "@/components/ui/input";
-import { DEMO_ACCOUNTS, DEMO_PASSWORD } from "@/lib/seed";
+import { SignInTrigger } from "@/components/sign-in-experience";
 
 const steps = [
   { number: "01", title: "Find your resource", body: "Search campus equipment, studios, and workspaces in plain language. See requirements before you request.", icon: Search },
@@ -22,13 +18,7 @@ const categories = [
   { title: "Prototyping equipment", icon: Boxes, filter: "equipment" },
 ];
 
-export default async function LoginPage({ searchParams }: PageProps<"/login">) {
-  const { redirectTo: requestedRedirect } = await searchParams;
-  const redirectTo = typeof requestedRedirect === "string" && requestedRedirect.startsWith("/") && !requestedRedirect.startsWith("//")
-    ? requestedRedirect
-    : "/";
-  const demo = process.env.DEMO_MODE === "true";
-
+export default function LoginPage() {
   return (
     <div className="public-home">
       <section className="public-hero" aria-labelledby="public-title">
@@ -42,27 +32,11 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
             <input id="public-query" name="q" placeholder="Search labs, equipment, or workspaces..." />
             <button type="submit" aria-label="Search resources"><ArrowRight size={18} /></button>
           </form>
-          <div className="public-hero-actions"><Link className="button-primary" href="/">Explore resources <ArrowRight size={17} /></Link><Link className="button-text" href="/login#sign-in">Sign in to your account <ArrowUpRight size={15} /></Link></div>
+          <div className="public-hero-actions"><Link className="button-primary" href="/">Explore resources <ArrowRight size={17} /></Link><SignInTrigger className="button-text">Sign in to your account <ArrowUpRight size={15} /></SignInTrigger></div>
           <div className="market-trust-line"><ShieldCheck size={17} /> Verified access <span /> Clear booking rules <span /> Accountable hand-offs</div>
         </div>
         <div className="public-hero-side">
           <div className="public-visual" role="img" aria-label="A student working in a campus makerspace"><div className="public-visual-shade" /><div className="public-visual-caption"><span className="visual-note-icon"><Workflow size={18} /></span><span><strong>Space for what&apos;s next</strong><small>Tools, labs, and people to move ideas forward</small></span></div></div>
-          <aside id="sign-in" className="access-card" aria-labelledby="signin-title">
-            <div className="access-card-heading"><span className="access-icon"><ShieldCheck size={20} /></span><div><p className="market-eyebrow">YOUR WORKSPACE AWAITS</p><h2 id="signin-title">Welcome back</h2></div></div>
-            <ActionForm action={login} submit="Sign in to LabLoop" className="signin-form">
-              <input type="hidden" name="redirectTo" value={redirectTo} />
-              <Field label="College email"><Input name="email" type="email" autoComplete="email" placeholder="you@college.edu" required /></Field>
-              <Field label="Password"><Input name="password" type="password" autoComplete="current-password" placeholder="Enter your password" required /></Field>
-            </ActionForm>
-            <p className="access-signup">New to LabLoop? <Link href="/signup">Create an account <ArrowUpRight size={13} /></Link></p>
-            {demo && <details className="demo-access">
-              <summary>Explore with a demo account <span aria-hidden="true">+</span></summary>
-              <div className="demo-content">
-                <p>Choose a role to enter the demo. Password: <code>{DEMO_PASSWORD}</code></p>
-                <ul>{DEMO_ACCOUNTS.map((account) => <li key={account.email}><form action={demoLogin.bind(null, account.email)}><input type="hidden" name="redirectTo" value={redirectTo} /><button type="submit"><span><strong>{account.label}</strong><small>{account.hint}</small></span><span aria-hidden="true">↗</span></button></form></li>)}</ul>
-              </div>
-            </details>}
-          </aside>
         </div>
       </section>
 
@@ -81,7 +55,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
         <div className="trust-copy"><p className="market-eyebrow">ACCESS YOU CAN UNDERSTAND</p><h2>Clear rules make better neighbours.</h2><p>LabLoop makes each resource&apos;s requirements, fair-share rules, and check-in process visible before you request access.</p><div className="trust-points"><span><b>01</b> Eligibility before you book</span><span><b>02</b> Fair-share rules you can read</span><span><b>03</b> A record for every hand-off</span></div></div>
       </section>
 
-      <section className="closing-section"><p className="market-eyebrow">FOR LABS, COLLEGES & RESOURCE OWNERS</p><h2>Make your resources<br />work harder.</h2><p>Open underused spaces and equipment to people ready to put them to good use.</p><Link className="button-primary" href="/login#sign-in">Sign in as a resource owner <ArrowRight size={17} /></Link></section>
+      <section className="closing-section"><p className="market-eyebrow">FOR LABS, COLLEGES & RESOURCE OWNERS</p><h2>Make your resources<br />work harder.</h2><p>Open underused spaces and equipment to people ready to put them to good use.</p><SignInTrigger className="button-primary">Sign in as a resource owner <ArrowRight size={17} /></SignInTrigger></section>
       <div className="public-footnote"><span>LabLoop · Northfield Institute of Technology</span><span>All people and organisations shown are fictional.</span></div>
     </div>
   );

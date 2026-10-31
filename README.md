@@ -47,6 +47,7 @@ Every user is verified, every resource checks eligibility, high-demand equipment
 | Damage / delay / incidents | Incidents with human-decided outcomes and one appeal; scheduler flags overdue and no-shows |
 | Notifications | In-app centre; scheduler reminders, overdue, offers |
 | Roles | user, external, manager, owner, admin, scoped to departments (`canManage`) |
+| Owner onboarding | Host users request access at `/owner-access`; an admin review grants the role and department with an audit entry |
 | Audit | Append-only `audit_log`, SHA-256 hash chain computed by a DB trigger, *Verify integrity* button |
 | Privacy | RLS on every table with no client policies; IDs/certificates visible only to verifiers; purpose text only to staff |
 
@@ -69,7 +70,7 @@ db/migrations/       schema, constraints, audit chain
 ```bash
 npm install
 cp .env.example .env.local      # fill DATABASE_URL (Supabase transaction pooler), SESSION_SECRET, CRON_SECRET
-# apply db/migrations/001_schema.sql to the database once
+# apply db/migrations/*.sql in numeric order to the database
 npm run seed                    # loads the fictional demo world
 npm run dev
 npm test                        # rules unit tests

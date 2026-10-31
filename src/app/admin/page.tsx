@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { decideAppeal, resetDemo, runScheduler, togglePartner, verifyChain } from "@/app/actions/admin";
+import { reviewOwnerAccess } from "@/app/actions/owner-access";
 import { ActionForm } from "@/components/action-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,9 @@ export default async function Admin() {
   ];
   const appeals = await sql`select i.id, i.booking_id, i.appeal_text, i.resolution, i.penalty, r.name from incidents i join resources r on r.id = i.resource_id where i.appeal_status = 'PENDING'`;
   const partners = await sql`select id, name, kind, email_domain, agreement_active from organizations where kind <> 'HOST' order by name`;
+  const ownerRequests = await sql`select r.id, r.reason, r.created_at, p.full_name, p.email, d.name as department
+    from owner_access_requests r join profiles p on p.id = r.profile_id join departments d on d.id = r.department_id
+    where r.status = 'PENDING' order by r.created_at`;
   const [stats] = await sql`select
       (select count(*)::int from resources where status = 'ACTIVE') as resources,
       (select count(*)::int from bookings where status in ('CLOSED','RETURNED')) as completed,
@@ -96,6 +100,27 @@ export default async function Admin() {
             </li>
           ))}
         </ul>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Owner access requests ({ownerRequests.length})</h2>
+        {ownerRequests.length === 0 ? <p className="text-sm text-muted-foreground">No owner access requests are waiting for review.</p> : ownerRequests.map((request) => (
+          <article key={request.id} className="space-y-3 rounded-lg border p-4 text-sm">
+            <div>
+              <h3 className="font-semibold">{request.full_name} · {request.department}</h3>
+              <p className="text-muted-foreground">{request.email} · requested {fmt(request.created_at)}</p>
+            </div>
+            <p className="whitespace-pre-wrap leading-6">{request.reason}</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <ActionForm action={reviewOwnerAccess.bind(null, request.id, true)} submit="Approve owner access" className="space-y-2">
+                <Input name="reason" required aria-label="Approval note" placeholder="Approval note" />
+              </ActionForm>
+              <ActionForm action={reviewOwnerAccess.bind(null, request.id, false)} submit="Decline request" variant="outline" className="space-y-2">
+                <Input name="reason" required aria-label="Decision note" placeholder="Why it is declined" />
+              </ActionForm>
+            </div>
+          </article>
+        ))}
       </section>
 
       <section className="space-y-2">
