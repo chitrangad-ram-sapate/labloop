@@ -18,6 +18,9 @@ export type Actor = {
 };
 
 const COOKIE = "labloop_session";
+const sessionSecretHint = process.env.NODE_ENV === "production"
+  ? "Set SESSION_SECRET in the hosting service's environment settings, then redeploy or restart the service."
+  : "Set it in .env.local, then restart the Next.js server.";
 
 export function hashPassword(pw: string) {
   const salt = randomBytes(16).toString("hex");
@@ -31,7 +34,7 @@ export function checkPassword(pw: string, stored: string) {
 
 const sign = (id: string) => {
   const secret = process.env.SESSION_SECRET?.trim();
-  if (!secret) throw new Error("SESSION_SECRET is not configured. Set it in .env.local, then restart the Next.js server.");
+  if (!secret) throw new Error(`SESSION_SECRET is not configured. ${sessionSecretHint}`);
   return createHmac("sha256", secret).update(id).digest("hex");
 };
 

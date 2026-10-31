@@ -57,9 +57,9 @@ Every user is verified, every resource checks eligibility, high-demand equipment
 
 ## Architecture
 
-Next.js (App Router, server components + server actions) on Render (free tier) → Postgres on Supabase (plain SQL via `postgres`).
+Next.js (App Router, server components + server actions) on Render with PostgreSQL (plain SQL via `postgres`).
 Every state change runs in one transaction: permission check → state-machine check → update → audit row → notification.
-The scheduler (`/api/cron/tick`) is called every 10 minutes by `pg_cron` in Supabase (secret kept in Supabase Vault) and from the admin button. It releases expired cart holds and offers freed capacity to eligible waitlisted requests.
+The scheduler (`/api/cron/tick`) can be called every 10 minutes by `pg_cron` with its secret in the database provider's secret vault, and from the admin button. It releases expired cart holds and offers freed capacity to eligible waitlisted requests.
 
 ```
 src/lib/rules.ts     state machine + Fair-Share Score (pure, unit-tested)
@@ -71,20 +71,35 @@ src/app/actions/*    server actions (all writes)
 db/migrations/       schema, constraints, audit chain
 ```
 
-## Run locally
+## Database and environment setup
 
-```bash
-npm install
-cp .env.example .env.local      # fill DATABASE_URL (Supabase transaction pooler), SESSION_SECRET, CRON_SECRET
-# apply db/migrations/*.sql in numeric order to the database (including 004_cart_trust_complaints.sql)
-npm run seed                    # loads the fictional demo world
-npm run dev
-npm test                        # rules unit tests
+LabLoop requires a real PostgreSQL database. It does not start PostgreSQL itself and does not fall back to sample data. `DATABASE_URL` is server-only; never prefix it with `NEXT_PUBLIC_`.
+
+Create a private local environment file in Windows PowerShell:
+
+```powershell
+Copy-Item .env.example .env.local
+notepad .env.local
 ```
 
-For an existing hosted database, apply each not-yet-applied migration in the Supabase SQL Editor, in numeric order. There is no migration CLI script in `package.json`; apply `004_cart_trust_complaints.sql` after `003_owner_access_requests.sql` and before deploying code that uses the cart, trust, or complaint tables.
+Set `DATABASE_URL` to a valid PostgreSQL connection URL and set a unique `SESSION_SECRET`. Set `CRON_SECRET` for the protected cron route. `DEMO_MODE` enables the fictional demo flows. `.env.local` is ignored by Git; never paste real values into chat or commit them.
 
-Advisory AI is optional. Set `GROQ_API_KEY` to enable smart matching, eligibility/conflict explanations, condition comparison, and complaint summaries. AI output never approves or rejects a booking.
+Run `npm.cmd run db:check` to test database connectivity and confirm the tables required by migrations `001`–`004` exist. This check does not change the database and never prints the connection URL. The project has no migration ledger or migration CLI, so it cannot infer which SQL migrations have already run.
+
+Inspect the target database before applying any migration. Apply only missing SQL files, once each, in numeric order. Migration `002_app_role_and_scheduler.sql` contains password and cron-secret placeholders; never execute them literally. It also uses `pg_cron`, `pg_net`, and Vault, which may not be available on a plain PostgreSQL installation. Set the app-role password out of band, replace the cron-secret placeholder with the configured secret, and confirm the scheduler URL before applying it.
+
+`npm run seed` truncates core LabLoop tables before inserting fictional demo data. Use it only on a fresh, disposable demo database, after applying migrations. It now requires both `DEMO_MODE=true` and `ALLOW_DEMO_SEED=true`.
+
+Changing `.env.local` only affects the local server. Production requires the same required variables in the hosting service environment settings, followed by a restart or redeploy.
+
+## Run locally
+
+```powershell
+npm.cmd install
+npm.cmd run db:check
+npm.cmd run dev
+npm.cmd test
+```
 
 ## Known limitations
 - One host institution; partner organisations are users, not owners.
@@ -93,4 +108,4 @@ Advisory AI is optional. Set `GROQ_API_KEY` to enable smart matching, eligibilit
 - In demo mode, check-out is allowed before the start time so judges don't have to wait.
 
 ## Disclosure
-Built during the hackathon window. Uses Next.js, React, Tailwind CSS, shadcn/ui (Radix), postgres.js, qrcode, date-fns and Vitest; hosted on Vercel and Supabase. AI-assisted coding tools were used during development; details are in the submission document.
+Built during the hackathon window. Uses Next.js, React, Tailwind CSS, shadcn/ui (Radix), postgres.js, qrcode, date-fns and Vitest; hosted on Render and PostgreSQL. AI-assisted coding tools were used during development; details are in the submission document.

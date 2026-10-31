@@ -12,7 +12,7 @@ create extension if not exists pg_net with schema extensions;
 select vault.create_secret('<CRON_SECRET>', 'labloop_cron_secret');
 select cron.schedule('labloop-tick', '*/10 * * * *', $$
   select net.http_get(
-    url := 'https://labloop-9iqv.onrender.com/api/cron/tick',
+    url := 'https://labloop-ierl.onrender.com/api/cron/tick',
     headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'labloop_cron_secret')),
     timeout_milliseconds := 60000);
 $$);

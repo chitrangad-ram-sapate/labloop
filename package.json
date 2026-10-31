@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "seed": "node --env-file=.env.local --import tsx scripts/seed.mts",
+    "db:check": "node --import tsx scripts/check-db.mts",
     "test": "vitest run"
   },
   "dependencies": {
