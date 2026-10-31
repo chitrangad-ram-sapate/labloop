@@ -8,7 +8,7 @@ import type { Resource } from "@/lib/booking";
 
 const D: Partial<Resource> = {
   category: "equipment", open_from: "09:00", open_to: "18:00", max_duration_min: 120, turnaround_min: 15, advance_days: 14,
-  max_hours_week: 6, cooldown_hours: 0, external_max_pct: 30, supervise_externals: true, open_to_externals: true, checklist: [], status: "ACTIVE",
+  max_hours_week: 6, cooldown_hours: 0, external_max_pct: 30, units_available: 1, supervise_externals: true, open_to_externals: true, checklist: [], status: "ACTIVE",
 };
 
 export function ResourceForm({ r, credentials, selected }: { r?: Resource; credentials: { id: string; name: string }[]; selected: string[] }) {
@@ -48,6 +48,7 @@ export function ResourceForm({ r, credentials, selected }: { r?: Resource; crede
         <Field label="Opens"><Input type="time" name="open_from" defaultValue={v.open_from?.slice(0, 5)} required /></Field>
         <Field label="Closes"><Input type="time" name="open_to" defaultValue={v.open_to?.slice(0, 5)} required /></Field>
         <Field label="Max booking (min)"><Input type="number" name="max_duration_min" defaultValue={v.max_duration_min} /></Field>
+        <Field label="Units available"><Input type="number" name="units_available" min={1} max={1000} defaultValue={v.units_available} required /></Field>
         <Field label="Turnaround (min)" hint="Buffer for cleaning/reset"><Input type="number" name="turnaround_min" defaultValue={v.turnaround_min} /></Field>
         <Field label="Book ahead (days)"><Input type="number" name="advance_days" defaultValue={v.advance_days} /></Field>
         <Field label="Status">

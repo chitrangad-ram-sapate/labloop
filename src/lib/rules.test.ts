@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertTransition, fairShare } from "./rules";
+import { assertTransition, fairShare, trustStars } from "./rules";
 
 describe("transitions", () => {
   it("allows the happy path", () => {
@@ -22,5 +22,15 @@ describe("fairShare", () => {
   });
   it("caps the no-show penalty at -30", () => {
     expect(fairShare({ purpose: "SELF_LEARNING", hoursUsed30d: 20, firstUse: false, noShows60d: 9 }).score).toBe(-20);
+  });
+});
+
+describe("Trust Stars", () => {
+  it("starts new accounts at a neutral rating", () => {
+    expect(trustStars({ completedBookings: 0, onTimeReturns: 0, cleanConditionReturns: 0, verifiedTrainings: 0, incidents: 0 })).toBe(3);
+  });
+  it("rewards reliable returns and current training, and applies incident penalties", () => {
+    expect(trustStars({ completedBookings: 12, onTimeReturns: 12, cleanConditionReturns: 12, verifiedTrainings: 1, incidents: 0 })).toBe(5);
+    expect(trustStars({ completedBookings: 4, onTimeReturns: 4, cleanConditionReturns: 4, verifiedTrainings: 1, incidents: 1 })).toBe(2);
   });
 });

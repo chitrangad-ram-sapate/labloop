@@ -19,6 +19,9 @@ async function Nav() {
   const [{ n: unread }] = actor
     ? await sql<{ n: number }[]>`select count(*)::int as n from notifications where user_id = ${actor.id} and read_at is null`
     : [{ n: 0 }];
+  const [{ n: cartCount }] = actor
+    ? await sql<{ n: number }[]>`select count(*)::int as n from cart_items where user_id = ${actor.id} and hold_expires_at > now()`
+    : [{ n: 0 }];
   const staff = actor && ["owner", "manager", "admin"].includes(actor.role);
   const links = actor ? [
     { href: "/", label: "Explore resources" },
@@ -27,6 +30,7 @@ async function Nav() {
     { href: "/?category=space", label: "Workspaces" },
     { href: "/#how-it-works", label: "How it works" },
     { href: "/bookings", label: "My bookings" },
+    { href: "/cart", label: "Cart" },
     ...(staff ? [{ href: "/manage", label: "Manage" }] : []),
     ...(actor.role === "admin" ? [{ href: "/admin", label: "Admin" }] : []),
   ] : [
@@ -40,7 +44,7 @@ async function Nav() {
   return (
     <>
       <div className="nav-links nav-links-desktop">
-        {links.map((item, index) => <Link href={item.href} key={`${item.label}-${index}`}>{item.label}</Link>)}
+        {links.map((item, index) => <Link href={item.href} key={`${item.label}-${index}`}>{item.label}{item.href === "/cart" && cartCount > 0 ? ` (${cartCount})` : ""}</Link>)}
       </div>
       <div className="nav-actions nav-actions-desktop">
         {actor ? <>
@@ -52,7 +56,7 @@ async function Nav() {
       <details className="mobile-menu">
         <summary aria-label="Open navigation menu"><span className="menu-lines" aria-hidden="true"><i /><i /></span><span>Menu</span></summary>
         <div className="mobile-menu-panel">
-          {links.map((item, index) => <Link href={item.href} key={`${item.label}-${index}`}>{item.label}</Link>)}
+          {links.map((item, index) => <Link href={item.href} key={`${item.label}-${index}`}>{item.label}{item.href === "/cart" && cartCount > 0 ? ` (${cartCount})` : ""}</Link>)}
           {actor ? <>
             <Link href="/me">My passport</Link>
             <Link href="/notifications">Notifications {unread > 0 && <span className="mobile-unread">{unread}</span>}</Link>

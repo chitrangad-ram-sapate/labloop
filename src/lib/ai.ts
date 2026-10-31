@@ -50,6 +50,26 @@ export async function findResources(query: string, catalog: { id: string; name: 
   );
 }
 
+export async function explainEligibility(blocks: { code: string; message: string }[]) {
+  if (!blocks.length) return null;
+  return ask<{ guidance: string }>(
+    TEXT_MODEL,
+    "Explain the supplied deterministic resource eligibility blocks in plain language. Give practical next steps only; do not change or reinterpret policy, waive a requirement, or claim the user is eligible.",
+    blocks,
+    obj({ guidance: str }),
+  );
+}
+
+export async function explainConflicts(conflicts: { status: string; start: string; end: string; quantity: number; score: number | null }[]) {
+  if (!conflicts.length) return null;
+  return ask<{ explanation: string }>(
+    TEXT_MODEL,
+    "Explain the supplied resource schedule conflicts neutrally. Do not rank people, decide approval, or invent availability. Owners apply the published score and capacity rules.",
+    conflicts,
+    obj({ explanation: str }),
+  );
+}
+
 export type DocCheck = { readable: boolean; name_on_document: string; name_matches: boolean; issuer_or_title: string; matches_expected: boolean; date_on_document: string; issues: string[]; summary: string };
 
 export async function checkDocument(dataUrl: string | null, expect: { kind: "identity" | "credential"; name: string; organisation?: string; credential?: string }) {
@@ -91,5 +111,14 @@ export async function summariseIncident(context: string) {
     "Summarise a lab equipment incident neutrally in two sentences for the reviewing manager, then suggest one practical follow-up (e.g. repair, retraining). Never suggest a penalty; that is a human decision.",
     context,
     obj({ summary: str, suggested_follow_up: str }),
+  );
+}
+
+export async function summariseComplaint(context: string) {
+  return ask<{ summary: string; next_step: string }>(
+    TEXT_MODEL,
+    "Summarise a campus resource complaint neutrally for a human owner. Separate reported facts from uncertainty. Suggest one practical next step. Never decide fault, liability, or resolution.",
+    context,
+    obj({ summary: str, next_step: str }),
   );
 }

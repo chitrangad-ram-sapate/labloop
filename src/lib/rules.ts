@@ -22,6 +22,7 @@ export function assertTransition(from: BookingStatus, to: BookingStatus) {
 
 export const HOLDING: BookingStatus[] = ["APPROVED", "OFFERED", "IN_USE", "OVERDUE"];
 export const MAX_ACTIVE_BOOKINGS = 3;
+export const MAX_WEEKLY_HIGH_DEMAND_BOOKINGS = 3;
 
 export const label = (s: string) => s.replace(/_/g, " ").toLowerCase();
 
@@ -34,6 +35,26 @@ export const PURPOSES = {
 export type Purpose = keyof typeof PURPOSES;
 
 export type ScoreLine = { label: string; points: number; explanation: string };
+
+export type TrustInputs = {
+  completedBookings: number;
+  onTimeReturns: number;
+  cleanConditionReturns: number;
+  verifiedTrainings: number;
+  incidents: number;
+};
+
+/** A transparent 1–5 score. Sparse history starts neutral; good use earns stars and incidents reduce them. */
+export function trustStars(i: TrustInputs) {
+  const completed = Math.max(0, i.completedBookings);
+  const onTimeRate = completed ? i.onTimeReturns / completed : 1;
+  const conditionRate = completed ? i.cleanConditionReturns / completed : 1;
+  let stars = 3;
+  if (completed >= 3 && onTimeRate >= 0.9 && conditionRate >= 0.8 && i.incidents === 0) stars++;
+  if (completed >= 10 && onTimeRate >= 0.97 && conditionRate >= 0.95 && i.verifiedTrainings > 0 && i.incidents === 0) stars++;
+  if (i.incidents > 0) stars -= Math.min(2, i.incidents);
+  return Math.max(1, Math.min(5, stars));
+}
 
 /** Fair-Share Score: higher = stronger claim. Every point is explained so owners and users see the same reasoning. */
 export function fairShare(i: { purpose: Purpose; hoursUsed30d: number; firstUse: boolean; noShows60d: number }) {

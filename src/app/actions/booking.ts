@@ -9,7 +9,7 @@ import { getResource, isSupervised, offerNext, precheck, scoreFor } from "@/lib/
 import { sql } from "@/lib/db";
 import { istToDate } from "@/lib/format";
 import { audit, notify, notifyDepartment } from "@/lib/log";
-import { assertTransition, HOLDING, PURPOSES, type BookingStatus, type Purpose } from "@/lib/rules";
+import { assertTransition, HOLDING, MAX_ACTIVE_BOOKINGS, PURPOSES, type BookingStatus, type Purpose } from "@/lib/rules";
 
 export async function requestBooking(resourceId: string, _: ActionResult, fd: FormData) {
   return attempt(async () => {
@@ -24,11 +24,17 @@ export async function requestBooking(resourceId: string, _: ActionResult, fd: Fo
     const text = need(fd, "purpose_text", "a short description of what you'll do");
     const team = str(fd, "team_code").toUpperCase() || actor.team_code;
 
-    const pc = await precheck(actor, r, start, end, team);
-    if (!pc.ok) throw new Error(pc.blocks.map((b) => b.message).join(" "));
     const s = await scoreFor(actor.id, r.id, purpose);
 
     const id = await sql.begin(async (tx) => {
+      const [current] = await tx`select * from resources where id = ${r.id} for update`;
+      if (!current) throw new Error("Resource not found.");
+      const pc = await precheck(actor, current as typeof r, start, end, team);
+      if (!pc.ok) throw new Error(pc.blocks.map((b) => b.message).join(" "));
+      await tx`select id from profiles where id = ${actor.id} for update`;
+      const [{ active }] = await tx`select count(*)::int as active from bookings
+        where user_id = ${actor.id} and status in ('PENDING_REVIEW','APPROVED','OFFERED','IN_USE','OVERDUE')`;
+      if (Number(active) >= MAX_ACTIVE_BOOKINGS) throw new Error(`You already have ${active} active bookings (limit ${MAX_ACTIVE_BOOKINGS}).`);
       const [b] = await tx`insert into bookings (resource_id, user_id, start_at, end_at, slot, purpose_category, purpose_text, team_code, status, score, score_breakdown)
         values (${r.id}, ${actor.id}, ${start}, ${end}, tstzrange(${start}::timestamptz, ${end}::timestamptz + make_interval(mins => ${r.turnaround_min})),
                 ${purpose}, ${text}, ${team}, 'PENDING_REVIEW', ${s.score}, ${tx.json(s.breakdown as never)}) returning id`;
@@ -55,7 +61,9 @@ async function move(tx: postgres.TransactionSql, actor: Actor | null, b: B, to: 
   assertTransition(b.status, to);
   // Decisions keep their reason on the booking so the requester always sees "why" at a glance.
   const decision = ["APPROVED", "REJECTED", "WAITLISTED", "CANCELLED"].includes(to) ? { decision_reason: reason } : {};
-  await tx`update bookings set ${tx({ status: to, ...decision, ...extra } as never)} where id = ${b.id}`;
+  const updated = await tx`update bookings set ${tx({ status: to, ...decision, ...extra } as never)}
+    where id = ${b.id} and status = ${b.status} returning id`;
+  if (!updated.length) throw new Error("This booking changed while you were viewing it. Refresh the page and try again.");
   await audit(tx, actor, `booking.${to.toLowerCase()}`, "booking", b.id, reason, { from: b.status });
   if (actor?.id !== b.user_id) await notify(tx, b.user_id, `${b.resource_name}: ${to.replace(/_/g, " ").toLowerCase()}`, reason, `/bookings/${b.id}`);
 }
@@ -70,15 +78,21 @@ export async function decide(id: string, to: "APPROVED" | "REJECTED" | "WAITLIST
       await move(tx, actor, b, to, reason, { decided_by: actor.id, decision_reason: reason });
       if (to === "APPROVED") {
         // Competing requests for the same time go to the waitlist, with the reason spelled out.
-        const losers = await tx<B[]>`select b.id, b.status, b.user_id, b.resource_id, r.department_id, r.name as resource_name
+        const losers = await tx<B[]>`select b.id, b.status, b.user_id, b.resource_id, b.start_at, b.end_at, r.department_id, r.name as resource_name
           from bookings b join resources r on r.id = b.resource_id
           where b.resource_id = ${b.resource_id} and b.id <> ${b.id} and b.status = 'PENDING_REVIEW'
             and b.slot && (select slot from bookings where id = ${b.id})`;
-        for (const l of losers)
-          await move(tx, actor, l, "WAITLISTED", `This time was given to another request (“${reason}”). You are on the waitlist and will be offered the slot automatically if it frees up.`);
+        for (const l of losers) {
+          const [capacity] = await tx`select r.units_available,
+            labloop_resource_peak(r.id, candidate.slot, null::uuid, null::uuid, false, false, null::uuid) as occupied
+            from resources r join bookings candidate on candidate.resource_id = r.id where candidate.id = ${l.id}`;
+          const [quantity] = await tx`select quantity from bookings where id = ${l.id}`;
+          if (Number(capacity.occupied) + Number(quantity.quantity) <= Number(capacity.units_available)) continue;
+          await move(tx, actor, l, "WAITLISTED", `This time was given to another request (“${reason}”) and the remaining ${capacity.units_available - capacity.occupied} unit(s) cannot fit your request. You are on the waitlist and will be offered capacity automatically if it frees up.`);
+        }
       }
     });
-    return to === "APPROVED" ? "Approved. Any overlapping requests were waitlisted." : "Decision recorded.";
+    return to === "APPROVED" ? "Approved. Overlapping requests were waitlisted only where remaining unit capacity could not fit them." : "Decision recorded.";
   });
 }
 

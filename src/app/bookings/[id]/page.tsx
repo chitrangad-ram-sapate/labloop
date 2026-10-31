@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import {
   answerOffer, appeal, cancelBooking, checkOut, decide, decideExtension, inspect, reportIncident, requestExtension, resolveIncident, returnItem,
 } from "@/app/actions/booking";
+import { addComplaintMessage, escalateComplaint, openComplaint, updateComplaintStatus } from "@/app/actions/complaint";
 import { ActionForm } from "@/components/action-form";
 import { AiNote, Field, selectCls, Status } from "@/components/bits";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,9 @@ import { getResource, isSupervised } from "@/lib/booking";
 import { sql } from "@/lib/db";
 import { fmt, fmtTime } from "@/lib/format";
 import { PURPOSES, type ScoreLine } from "@/lib/rules";
+import { getTrustSummary } from "@/lib/trust";
+import { COMPLAINT_ISSUES, COMPLAINT_TRANSITIONS, complaintStatusLabel, type ComplaintStatus } from "@/lib/complaints";
+import { aiEnabled, explainConflicts } from "@/lib/ai";
 
 type Report = { phase: "CHECKOUT" | "RETURN"; checklist: Record<string, string>; photo: string | null; notes: string; created_at: Date; by: string; ai_diff: (ConditionDiff & AiMeta) | null };
 
@@ -63,19 +67,29 @@ export default async function BookingPage({ params }: PageProps<"/bookings/[id]"
   const staff = canManage(actor, r.department_id);
   const mine = b.user_id === actor.id;
   if (!staff && !mine) notFound();
+  const trust = staff ? await getTrustSummary(b.user_id) : null;
 
   const reports = await sql<Report[]>`select c.phase, c.checklist, c.photo, c.notes, c.created_at, c.ai_diff, p.full_name as by
     from condition_reports c join profiles p on p.id = c.recorded_by where booking_id = ${id}`;
   const out = reports.find((x) => x.phase === "CHECKOUT");
   const back = reports.find((x) => x.phase === "RETURN");
   const incidents = await sql`select i.*, p.full_name as reporter from incidents i join profiles p on p.id = i.reported_by where booking_id = ${id} order by created_at`;
+  const complaints = await sql`select id, issue_type, status, ai_summary, created_at from complaint_tickets where booking_id = ${id} order by created_at desc`;
+  const complaintMessages = complaints.length ? await sql`
+    select m.id, m.ticket_id, m.author_id, m.body, m.status, m.evidence, m.created_at, p.full_name as author_name
+    from complaint_messages m left join profiles p on p.id = m.author_id
+    where m.ticket_id = any(${sql.array(complaints.map((x) => x.id as string), 2950)}) order by m.created_at` : [];
   const timeline = await sql`select a.*, p.full_name from audit_log a left join profiles p on p.id = a.actor_id
     where entity_type = 'booking' and entity_id = ${id} order by id`;
   const rivals = staff && ["PENDING_REVIEW", "WAITLISTED"].includes(b.status)
-    ? await sql`select b2.id, b2.status, b2.score, b2.start_at, b2.end_at, p.full_name from bookings b2 join profiles p on p.id = b2.user_id
+    ? await sql`select b2.id, b2.status, b2.score, b2.start_at, b2.end_at, b2.quantity, p.full_name from bookings b2 join profiles p on p.id = b2.user_id
         where b2.resource_id = ${b.resource_id} and b2.id <> ${id} and b2.slot && ${b.slot}
           and b2.status in ('PENDING_REVIEW','WAITLISTED','APPROVED','OFFERED','IN_USE','OVERDUE') order by b2.score desc nulls last`
     : [];
+  const conflictAdvice = rivals.length && aiEnabled() ? await explainConflicts(rivals.map((x) => ({
+    status: String(x.status), start: new Date(x.start_at).toISOString(), end: new Date(x.end_at).toISOString(),
+    quantity: Number(x.quantity ?? 1), score: x.score == null ? null : Number(x.score),
+  }))) : null;
   const blockedByApproved = rivals.some((x) => ["APPROVED", "OFFERED", "IN_USE", "OVERDUE"].includes(x.status));
   const supervised = isSupervised(r, b.user_role);
 
@@ -87,6 +101,7 @@ export default async function BookingPage({ params }: PageProps<"/bookings/[id]"
           <h1 className="flex flex-wrap items-center gap-3 text-2xl font-bold">
             {fmt(b.start_at)} – {fmtTime(b.end_at)} <Status s={b.status} />
           </h1>
+          <p className="text-sm">Quantity: {b.quantity ?? 1} unit{Number(b.quantity ?? 1) === 1 ? "" : "s"}</p>
           <p className="text-sm">
             {b.full_name} ({b.org_name}{b.user_role === "external" ? ", external" : ""}) ·{" "}
             {PURPOSES[b.purpose_category as keyof typeof PURPOSES].label}: {b.purpose_text}
@@ -102,8 +117,14 @@ export default async function BookingPage({ params }: PageProps<"/bookings/[id]"
         {staff && ["PENDING_REVIEW", "WAITLISTED"].includes(b.status) && (
           <section className="space-y-3 rounded-lg border p-4">
             <h2 className="font-semibold">Review this request</h2>
+            {trust && <div className="rounded-lg border p-3 text-sm" aria-label="Privacy-preserving customer trust summary">
+              <p><strong>Trust:</strong> {"★".repeat(trust.stars)}{"☆".repeat(5 - trust.stars)} · {trust.trustId}</p>
+              <p className="text-xs text-muted-foreground">Verification {trust.verificationStatus.replaceAll("_", " ").toLowerCase()} · {trust.verifiedTrainings} current training(s) · {trust.completedBookings} completed booking(s) · {Math.round(trust.onTimeRate * 100)}% on time · {Math.round(trust.conditionRate * 100)}% clean condition reports · {trust.incidents} incident(s)</p>
+              <p className="text-xs text-muted-foreground">Trust metrics inform review; they do not decide the request. Sensitive identity documents are not shown here.</p>
+            </div>}
             {rivals.length > 0 && (
               <div className="text-sm">
+                {conflictAdvice && <AiNote title="AI schedule conflict explanation (advisory)">{conflictAdvice.explanation}</AiNote>}
                 <p className="font-medium">Overlapping bookings and requests (ranked by Fair-Share Score):</p>
                 <ul className="list-disc pl-5">
                   <li><strong>This request: {b.full_name}, score {Number(b.score)}</strong></li>
@@ -115,7 +136,7 @@ export default async function BookingPage({ params }: PageProps<"/bookings/[id]"
                   {rivals.some((x) => x.status === "PENDING_REVIEW" && Number(x.score) > Number(b.score))
                     ? "Recommendation: another request has a higher score. Approving this one is allowed, but explain why."
                     : "Recommendation: this request has the highest score for this time."}
-                  {" "}Approving waitlists the overlapping pending requests automatically, with the reason.
+                  {" "}Approving checks live unit capacity; pending requests are waitlisted with an explanation only when they cannot fit the remaining stock.
                 </p>
               </div>
             )}
@@ -206,7 +227,8 @@ export default async function BookingPage({ params }: PageProps<"/bookings/[id]"
         {/* Condition before/after */}
         {(out || back) && (
           <section className="space-y-2">
-            <h2 className="font-semibold">Condition: before and after</h2>
+            <h2 className="font-semibold">Condition Vault: before and after</h2>
+            <p className="text-xs text-muted-foreground">Only the borrower and staff for this resource department can access these reports and photos.</p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead><tr className="border-b text-left"><th className="py-1">Item</th><th>At check-out</th><th>At return</th></tr></thead>
@@ -289,6 +311,60 @@ export default async function BookingPage({ params }: PageProps<"/bookings/[id]"
                 )}
               </div>
             ))}
+          </section>
+        )}
+
+        {/* Booking-linked customer complaint tickets and private evidence history. */}
+        {(mine || staff) && (
+          <section className="space-y-4">
+            <div>
+              <h2 className="font-semibold">Customer complaint tickets</h2>
+              <p className="text-xs text-muted-foreground">Messages and evidence are visible only to this booking&apos;s customer and the resource department.</p>
+            </div>
+            {complaints.map((ticket) => {
+              const status = ticket.status as ComplaintStatus;
+              const transitions = COMPLAINT_TRANSITIONS[status] ?? [];
+              return <article key={ticket.id} className="space-y-3 rounded-xl border p-4">
+                <header className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-semibold">{COMPLAINT_ISSUES[ticket.issue_type as keyof typeof COMPLAINT_ISSUES] ?? ticket.issue_type}</h3>
+                  <span className="rounded-full border px-2 py-1 text-xs">{complaintStatusLabel(status)}</span>
+                </header>
+                {staff && ticket.ai_summary && <AiNote title="AI complaint summary (advisory)">{ticket.ai_summary}</AiNote>}
+                <ol className="space-y-3 border-l pl-4">
+                  {complaintMessages.filter((message) => message.ticket_id === ticket.id).map((message) => (
+                    <li key={message.id} className="space-y-1 text-sm">
+                      <p className="text-xs text-muted-foreground">{message.author_name ?? "LabLoop"} · {fmt(message.created_at)}{message.status ? ` · ${complaintStatusLabel(message.status as ComplaintStatus)}` : ""}</p>
+                      <p className="whitespace-pre-wrap">{message.body}</p>
+                      {message.evidence && <a href={message.evidence} target="_blank" rel="noreferrer"><img src={message.evidence} alt="Complaint evidence" className="max-h-48 rounded-lg border object-contain" /></a>}
+                    </li>
+                  ))}
+                </ol>
+                {staff && transitions.length > 0 && <div className="grid gap-2 sm:grid-cols-2">
+                  {transitions.map((to) => <ActionForm key={to} action={updateComplaintStatus.bind(null, ticket.id, to)} submit={`Set ${complaintStatusLabel(to)}`} className="space-y-2">
+                    <Input name="message" required aria-label={`Customer message for status ${complaintStatusLabel(to)}`} placeholder="Update for the customer" />
+                  </ActionForm>)}
+                </div>}
+                {ticket.status !== "CLOSED" && <ActionForm action={addComplaintMessage.bind(null, ticket.id)} submit="Add message" className="space-y-2">
+                  <Textarea name="message" required rows={2} aria-label="Complaint message" placeholder="Add a message to the history" />
+                  <PhotoInput name="evidence" label="Attach complaint evidence (optional)" />
+                </ActionForm>}
+                {mine && transitions.includes("ESCALATED") && <ActionForm action={escalateComplaint.bind(null, ticket.id)} submit="Escalate complaint" variant="outline" className="space-y-2">
+                  <Input name="message" required aria-label="Escalation reason" placeholder="Why should this be escalated?" />
+                </ActionForm>}
+              </article>;
+            })}
+            {mine && <details className="rounded-xl border p-4">
+              <summary className="cursor-pointer font-semibold">Open a complaint for this booking</summary>
+              <ActionForm action={openComplaint.bind(null, id)} submit="Open complaint ticket" className="mt-3 space-y-3">
+                <Field label="Issue type">
+                  <select name="issue_type" className={selectCls} required>
+                    {Object.entries(COMPLAINT_ISSUES).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Describe the issue"><Textarea name="message" required rows={3} maxLength={5000} /></Field>
+                <PhotoInput name="evidence" label="Attach evidence (optional)" />
+              </ActionForm>
+            </details>}
           </section>
         )}
 

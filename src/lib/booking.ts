@@ -3,7 +3,7 @@ import type { Actor } from "./auth";
 import { sql } from "./db";
 import { fmt, istDateKey, istMinutes } from "./format";
 import { audit, notify } from "./log";
-import { fairShare, MAX_ACTIVE_BOOKINGS, type Purpose } from "./rules";
+import { fairShare, MAX_ACTIVE_BOOKINGS, MAX_WEEKLY_HIGH_DEMAND_BOOKINGS, type Purpose } from "./rules";
 
 export type Resource = {
   id: string; department_id: string; owner_id: string; name: string;
@@ -12,7 +12,7 @@ export type Resource = {
   open_from: string; open_to: string; max_duration_min: number; turnaround_min: number; advance_days: number;
   requires_supervision: boolean; supervise_externals: boolean; open_to_externals: boolean;
   deposit_note: string | null; high_demand: boolean; max_hours_week: number; cooldown_hours: number;
-  external_max_pct: number; status: "ACTIVE" | "MAINTENANCE" | "RETIRED"; qr_token: string;
+  external_max_pct: number; units_available: number; status: "ACTIVE" | "MAINTENANCE" | "RETIRED"; qr_token: string;
 };
 
 export type Reason = { code: string; message: string; fix?: { label: string; href: string } };
@@ -25,6 +25,25 @@ export async function getResource(id: string) {
   if (!/^[0-9a-f-]{36}$/.test(id)) return null;
   const [r] = await sql<Resource[]>`select * from resources where id = ${id}`;
   return r ?? null;
+}
+
+export async function getResourceAvailability(resourceId: string, start: Date, end: Date, actorId: string | null) {
+  const [stock] = await sql<{ units_available: number; allocated: number; cart_held_by_others: number }[]>`
+    select r.units_available,
+      labloop_resource_peak(r.id,
+        tstzrange(${start}::timestamptz, ${end}::timestamptz + make_interval(mins => r.turnaround_min), '[)'),
+        null::uuid, null::uuid, false, false, null::uuid) as allocated,
+      labloop_resource_peak(r.id,
+        tstzrange(${start}::timestamptz, ${end}::timestamptz + make_interval(mins => r.turnaround_min), '[)'),
+        null::uuid, null::uuid, true, false, ${actorId}::uuid) as cart_held_by_others
+    from resources r where r.id = ${resourceId}`;
+  if (!stock) return null;
+  return {
+    capacity: stock.units_available,
+    allocated: stock.allocated,
+    heldByOthers: stock.cart_held_by_others,
+    available: Math.max(0, stock.units_available - stock.allocated),
+  };
 }
 
 export async function missingCredentials(userId: string, resourceId: string) {
@@ -65,6 +84,7 @@ export async function precheck(actor: Actor, r: Resource, start: Date, end: Date
     blocks.push({ code: "TOO_LONG", message: `Maximum booking length is ${r.max_duration_min / 60} h.` });
   if (istDateKey(start) !== istDateKey(end) || istMinutes(start) < toMin(r.open_from) || istMinutes(end) > toMin(r.open_to))
     blocks.push({ code: "OUTSIDE_HOURS", message: `Open ${r.open_from.slice(0, 5)}–${r.open_to.slice(0, 5)}, same-day bookings only.` });
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || !(end > start)) return { ok: false, blocks, warnings };
 
   const [{ active }] = await sql<{ active: number }[]>`
     select count(*)::int as active from bookings
@@ -73,16 +93,19 @@ export async function precheck(actor: Actor, r: Resource, start: Date, end: Date
     blocks.push({ code: "QUOTA_ACTIVE", message: `You already have ${active} active bookings (limit ${MAX_ACTIVE_BOOKINGS}). Finish or cancel one first.`, fix: { label: "My bookings", href: "/bookings" } });
 
   if (r.high_demand) {
-    const [w] = await sql<{ user_h: string; team_h: string; ext_h: string }[]>`
+    const [w] = await sql<{ user_h: string; team_h: string; ext_h: string; user_bookings: number }[]>`
       with wk as (select date_trunc('week', ${start}::timestamptz at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata' as s)
       select
         coalesce(sum(extract(epoch from b.end_at - b.start_at) / 3600) filter (where b.user_id = ${actor.id}), 0) as user_h,
         coalesce(sum(extract(epoch from b.end_at - b.start_at) / 3600) filter (where b.team_code = ${teamCode}), 0) as team_h,
-        coalesce(sum(extract(epoch from b.end_at - b.start_at) / 3600) filter (where p.role = 'external'), 0) as ext_h
+        coalesce(sum(extract(epoch from b.end_at - b.start_at) / 3600) filter (where p.role = 'external'), 0) as ext_h,
+        count(*) filter (where b.user_id = ${actor.id})::int as user_bookings
       from bookings b join profiles p on p.id = b.user_id cross join wk
       where b.resource_id = ${r.id} and b.start_at >= wk.s and b.start_at < wk.s + interval '7 days'
         and b.status in ('PENDING_REVIEW','APPROVED','OFFERED','IN_USE','OVERDUE','RETURNED','CLOSED','DISPUTED')`;
     const open = openHoursPerWeek(r);
+    if (Number(w.user_bookings) >= MAX_WEEKLY_HIGH_DEMAND_BOOKINGS)
+      blocks.push({ code: "QUOTA_BOOKINGS", message: `High-demand resources are limited to ${MAX_WEEKLY_HIGH_DEMAND_BOOKINGS} bookings per person per week; you have already used that limit.` });
     if (Number(w.user_h) + hours > r.max_hours_week)
       blocks.push({ code: "QUOTA_HOURS", message: `Weekly limit is ${r.max_hours_week} h per person on this high-demand resource; you have ${Number(w.user_h).toFixed(1)} h that week.` });
     if (teamCode && Number(w.team_h) + hours > open * 0.3)
@@ -99,12 +122,19 @@ export async function precheck(actor: Actor, r: Resource, start: Date, end: Date
     }
   }
 
-  const [ov] = await sql<{ taken: number; contested: number }[]>`
-    select count(*) filter (where status in ('APPROVED','OFFERED','IN_USE','OVERDUE'))::int as taken,
-           count(*) filter (where status = 'PENDING_REVIEW')::int as contested
+  const [ov] = await sql<{ contested: number }[]>`
+    select count(*) filter (where status = 'PENDING_REVIEW')::int as contested
     from bookings where resource_id = ${r.id} and user_id <> ${actor.id}
       and slot && tstzrange(${start}::timestamptz, ${end}::timestamptz + make_interval(mins => ${r.turnaround_min}))`;
-  if (ov.taken) warnings.push({ code: "SLOT_TAKEN", message: "This time is already booked. You can still request it: the owner may waitlist you, and you will be offered the slot automatically if it frees up." });
+  const [stock] = await sql<{ units_available: number; allocated: number }[]>`
+    select r.units_available,
+      labloop_resource_peak(r.id, tstzrange(${start}::timestamptz, ${end}::timestamptz + make_interval(mins => r.turnaround_min), '[)'),
+        null::uuid, null::uuid, false, false, null::uuid) as allocated
+    from resources r where r.id = ${r.id}`;
+  const unitsFree = Math.max(0, Number(stock.units_available) - Number(stock.allocated));
+  if (Number(stock.allocated) > 0) warnings.push({ code: "CAPACITY", message: unitsFree
+    ? `${Number(stock.allocated)} of ${stock.units_available} units are allocated by confirmed bookings or active carts; ${unitsFree} unit(s) remain.`
+    : `All ${stock.units_available} unit(s) are allocated by confirmed bookings or active carts. You can still request the time, but the owner may waitlist you.` });
   if (ov.contested) warnings.push({ code: "CONTESTED", message: `${ov.contested} other request(s) overlap this time. The owner decides using the published Fair-Share Score shown on your request.` });
 
   return { ok: blocks.length === 0, blocks, warnings };
@@ -124,14 +154,25 @@ export async function scoreFor(userId: string, resourceId: string, purpose: Purp
 /** When a slot frees, offer it to the best-scoring waitlisted request that now fits. */
 export async function offerNext(tx: postgres.TransactionSql, resourceId: string) {
   const minutes = process.env.DEMO_MODE === "true" ? 3 : 30;
-  const candidates = await tx<{ id: string; user_id: string }[]>`
-    select id, user_id from bookings where resource_id = ${resourceId} and status = 'WAITLISTED' and start_at > now()
-    order by score desc nulls last, created_at limit 10`;
+  await tx`select id from resources where id = ${resourceId} for update`;
+  const candidates = await tx<{ id: string; user_id: string; quantity: number; slot: unknown; units_available: number }[]>`
+    select b.id, b.user_id, b.quantity, b.slot, r.units_available
+    from bookings b join resources r on r.id = b.resource_id
+    where b.resource_id = ${resourceId} and b.status = 'WAITLISTED' and b.start_at > now()
+    order by b.score desc nulls last, b.created_at limit 10`;
   for (const c of candidates) {
+    await tx`select id from profiles where id = ${c.user_id} for update`;
+    const [{ active }] = await tx`select count(*)::int as active from bookings
+      where user_id = ${c.user_id} and status in ('PENDING_REVIEW','APPROVED','OFFERED','IN_USE','OVERDUE')`;
+    if (Number(active) >= MAX_ACTIVE_BOOKINGS) continue;
+    const [stock] = await tx`select labloop_resource_peak(${resourceId}::uuid, b.slot,
+      null::uuid, null::uuid, false, false, null::uuid) as allocated from bookings b where b.id = ${c.id}`;
+    if (Number(stock.allocated) + Number(c.quantity) > Number(c.units_available)) continue;
     try {
       await tx.savepoint((sp) => sp`update bookings set status = 'OFFERED', offer_expires_at = now() + make_interval(mins => ${minutes}) where id = ${c.id}`);
     } catch (e) {
-      if ((e as { code?: string }).code === "23P01") continue; // still overlaps another booking
+      const error = e as { code?: string; message?: string };
+      if (error.code === "P0001" && error.message?.includes("unit(s) are available")) continue; // capacity changed while we waited
       throw e;
     }
     await audit(tx, null, "booking.offered", "booking", c.id, `A slot freed up. Offered to the highest-scoring waitlisted request; accept within ${minutes} min.`);

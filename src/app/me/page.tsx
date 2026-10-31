@@ -5,9 +5,11 @@ import { PhotoInput } from "@/components/photo-input";
 import { requireActor } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { fmt } from "@/lib/format";
+import { getTrustSummary } from "@/lib/trust";
 
 export default async function Passport() {
   const actor = await requireActor();
+  const trust = await getTrustSummary(actor.id);
   const [me] = await sql`select identity_status, identity_reason, id_doc is not null as has_doc from profiles where id = ${actor.id}`;
   const creds = await sql`select uc.status, uc.decision_reason, uc.expires_at, uc.created_at, ct.name from user_credentials uc
     join credential_types ct on ct.id = uc.credential_type_id where uc.profile_id = ${actor.id} order by ct.name`;
@@ -19,6 +21,14 @@ export default async function Passport() {
         <h1 className="text-2xl font-bold">My passport</h1>
         <p className="text-sm text-muted-foreground">{actor.full_name} · {actor.email} · {actor.org_name}</p>
       </div>
+
+      <section className="space-y-2 rounded-lg border p-4" aria-labelledby="trust-heading">
+        <h2 id="trust-heading" className="font-semibold">Customer Trust</h2>
+        <p className="text-sm"><strong>Trust ID:</strong> {trust.trustId} · <strong>Verification:</strong> {trust.verificationStatus.replaceAll("_", " ").toLowerCase()}</p>
+        <p className="text-lg font-semibold" aria-label={`${trust.stars} out of 5 trust stars`}>{"★".repeat(trust.stars)}{"☆".repeat(5 - trust.stars)} <span className="text-sm">{trust.stars}/5 Trust Stars</span></p>
+        <p className="text-xs text-muted-foreground">{trust.verifiedTrainings} completed training credential(s) · {trust.completedBookings} completed booking(s) · {Math.round(trust.onTimeRate * 100)}% on-time returns · {Math.round(trust.conditionRate * 100)}% clean condition reports</p>
+        <p className="text-xs text-muted-foreground">Stars use published return, condition, training, and incident history. New profiles start at a neutral three stars; staff make all approval decisions.</p>
+      </section>
 
       {actor.role === "external" && (
         <section className="space-y-3 rounded-lg border p-4">

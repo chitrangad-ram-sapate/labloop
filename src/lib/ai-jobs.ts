@@ -1,5 +1,5 @@
 import { after } from "next/server";
-import { checkDocument, compareCondition, summariseIncident } from "./ai";
+import { checkDocument, compareCondition, summariseComplaint, summariseIncident } from "./ai";
 import { sql } from "./db";
 import { notifyDepartment } from "./log";
 
@@ -47,5 +47,19 @@ export function aiSummariseIncident(incidentId: string) {
     if (!i) return;
     const r = await summariseIncident(`Resource: ${i.name}\nType: ${i.type}, severity ${i.severity}\nReport: ${i.description}\nReturn checklist: ${JSON.stringify(i.checklist ?? {})}\nReturn notes: ${i.notes ?? ""}\nCondition comparison: ${i.ai_diff?.summary ?? "n/a"}`);
     if (r) await sql`update incidents set ai_summary = ${`${r.summary} Suggested follow-up: ${r.suggested_follow_up}`} where id = ${incidentId}`;
+  });
+}
+
+export function aiSummariseComplaint(ticketId: string) {
+  after(async () => {
+    const messages = await sql`
+      select t.issue_type, m.status, m.body from complaint_tickets t
+      join complaint_messages m on m.ticket_id = t.id
+      where t.id = ${ticketId} order by m.created_at`;
+    if (!messages.length) return;
+    const context = messages.map((m) => `${m.status ? `Status ${m.status}. ` : ""}${m.body}`).join("\n");
+    const result = await summariseComplaint(`Issue type: ${messages[0].issue_type}\nComplaint history:\n${context}`);
+    if (!result) return;
+    await sql`update complaint_tickets set ai_summary = ${`${result.summary} Suggested next step: ${result.next_step}`}, updated_at = now() where id = ${ticketId}`;
   });
 }

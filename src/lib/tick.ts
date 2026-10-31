@@ -5,6 +5,19 @@ import { audit, notify, notifyDepartment } from "./log";
 /** Scheduler pass: reminders, no-shows, overdue returns and expired waitlist offers. Safe to run any time. */
 export async function tick() {
   return sql.begin(async (tx) => {
+    const expiredResources = await tx`select distinct resource_id from cart_items where hold_expires_at <= now() order by resource_id`;
+    if (expiredResources.length) {
+      const ids = expiredResources.map((row) => row.resource_id as string);
+      await tx`select id from resources where id = any(${tx.array(ids, 2950)}) order by id for update`;
+    }
+    const expiredHolds = await tx`delete from cart_items where hold_expires_at <= now() returning resource_id`;
+    const expiredByResource = new Map<string, number>();
+    for (const row of expiredHolds) expiredByResource.set(row.resource_id, (expiredByResource.get(row.resource_id) ?? 0) + 1);
+    for (const [resourceId, count] of expiredByResource) {
+      await audit(tx, null, "cart.hold_expired", "resource", resourceId, `${count} expired cart hold(s) released back to inventory.`);
+      await offerNext(tx, resourceId);
+    }
+
     const reminded = await tx`update bookings b set reminded_at = now() from resources r
       where r.id = b.resource_id and b.status = 'APPROVED' and b.reminded_at is null and b.start_at between now() and now() + interval '1 hour'
       returning b.id, b.user_id, r.name`;
@@ -34,6 +47,6 @@ export async function tick() {
       await offerNext(tx, b.resource_id);
     }
 
-    return { reminded: reminded.length, noShows: noShows.length, overdue: overdue.length, expiredOffers: expired.length };
+    return { expiredCartHolds: expiredHolds.length, reminded: reminded.length, noShows: noShows.length, overdue: overdue.length, expiredOffers: expired.length };
   });
 }

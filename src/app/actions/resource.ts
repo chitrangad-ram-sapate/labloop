@@ -9,7 +9,7 @@ import { audit } from "@/lib/log";
 
 const num = (fd: FormData, k: string, min: number, max: number) => {
   const n = Number(str(fd, k));
-  if (!Number.isFinite(n) || n < min || n > max) throw new Error(`${k.replace(/_/g, " ")} must be between ${min} and ${max}.`);
+  if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${k.replace(/_/g, " ")} must be a whole number between ${min} and ${max}.`);
   return n;
 };
 
@@ -33,6 +33,7 @@ export async function saveResource(id: string | null, _: ActionResult, fd: FormD
       max_duration_min: num(fd, "max_duration_min", 15, 720),
       turnaround_min: num(fd, "turnaround_min", 0, 120),
       advance_days: num(fd, "advance_days", 1, 60),
+      units_available: num(fd, "units_available", 1, 1000),
       max_hours_week: num(fd, "max_hours_week", 1, 80),
       cooldown_hours: num(fd, "cooldown_hours", 0, 168),
       external_max_pct: num(fd, "external_max_pct", 0, 100),
