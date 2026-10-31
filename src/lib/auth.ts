@@ -29,7 +29,11 @@ export function checkPassword(pw: string, stored: string) {
   return timingSafeEqual(Buffer.from(hash, "hex"), scryptSync(pw, salt, 32));
 }
 
-const sign = (id: string) => createHmac("sha256", process.env.SESSION_SECRET!).update(id).digest("hex");
+const sign = (id: string) => {
+  const secret = process.env.SESSION_SECRET?.trim();
+  if (!secret) throw new Error("SESSION_SECRET is not configured. Set it in .env.local, then restart the Next.js server.");
+  return createHmac("sha256", secret).update(id).digest("hex");
+};
 
 export async function startSession(id: string) {
   (await cookies()).set(COOKIE, `${id}.${sign(id)}`, {

@@ -1,10 +1,7 @@
 import Link from "next/link";
-import { Field, selectCls } from "@/components/bits";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { requireActor } from "@/lib/auth";
+import { Suspense } from "react";
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Boxes, Cpu, FlaskConical, Laptop, MapPin, Microscope, Printer, Search, ShieldCheck, Users, Workflow } from "lucide-react";
+import { getActor } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { findResources } from "@/lib/ai";
 import { rankByQuery } from "@/lib/finder";
@@ -14,8 +11,31 @@ type Row = {
   high_demand: boolean; requires_supervision: boolean; open_to_externals: boolean; photo: string | null; missing: number; requires: string | null;
 };
 
-export default async function Catalog({ searchParams }: PageProps<"/">) {
-  const actor = await requireActor();
+const categories = [
+  { label: "Laboratories", detail: "Shared lab spaces", value: "space", icon: FlaskConical, tone: "blue" },
+  { label: "Electronics equipment", detail: "Test, build, repair", value: "equipment", icon: Workflow, tone: "violet" },
+  { label: "Computing resources", detail: "Workstations & GPUs", value: "computing", icon: Cpu, tone: "teal" },
+  { label: "3D & fabrication", detail: "Prototype your ideas", value: "equipment", icon: Printer, tone: "amber" },
+  { label: "Study spaces", detail: "Quiet places to focus", value: "space", icon: Laptop, tone: "sky" },
+  { label: "Meeting rooms", detail: "Bring your team together", value: "space", icon: Users, tone: "rose" },
+  { label: "Research facilities", detail: "Tools for deeper work", value: "equipment", icon: Microscope, tone: "indigo" },
+  { label: "Prototyping equipment", detail: "From sketch to sample", value: "equipment", icon: Boxes, tone: "orange" },
+];
+
+function resourceHref(category: string) {
+  return `/?category=${encodeURIComponent(category)}`;
+}
+
+export default function CatalogPage({ searchParams }: PageProps<"/">) {
+  return (
+    <Suspense fallback={<div className="marketplace-page" role="status"><p className="catalog-loading">Loading campus resources…</p></div>}>
+      <CatalogContent searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+async function CatalogContent({ searchParams }: { searchParams: PageProps<"/">["searchParams"] }) {
+  const actor = await getActor();
   const sp = await searchParams;
   const q = String(sp.q ?? "");
   const category = String(sp.category ?? "");
@@ -25,7 +45,7 @@ export default async function Catalog({ searchParams }: PageProps<"/">) {
     select r.id, r.name, r.category, r.location, r.description, d.name as dept, r.status, r.high_demand,
            r.requires_supervision, r.open_to_externals, r.photo,
            (select count(*)::int from resource_requirements rr where rr.resource_id = r.id and not exists (
-              select 1 from user_credentials uc where uc.profile_id = ${actor.id} and uc.credential_type_id = rr.credential_type_id
+              select 1 from user_credentials uc where uc.profile_id = ${actor?.id ?? null} and uc.credential_type_id = rr.credential_type_id
               and uc.status = 'VERIFIED' and (uc.expires_at is null or uc.expires_at > now()))) as missing,
            (select string_agg(ct.name, ', ') from resource_requirements rr join credential_types ct on ct.id = rr.credential_type_id
               where rr.resource_id = r.id) as requires
@@ -33,72 +53,113 @@ export default async function Catalog({ searchParams }: PageProps<"/">) {
     where r.status <> 'RETIRED' and (${category} = '' or r.category = ${category})
     order by r.high_demand desc, r.name`;
 
-  const visible = rows.filter((r) => (!eligibleOnly || r.missing === 0) && (actor.role !== "external" || r.open_to_externals));
+  const identityVerified = actor?.role !== "external" || actor.identity_status === "VERIFIED";
+  const visible = rows.filter((r) => (!eligibleOnly || !actor || (r.missing === 0 && identityVerified)) && (actor?.role !== "external" || r.open_to_externals));
   const ai = q ? await findResources(q, visible.map(({ id, name, category, description, location, requires }) => ({ id, name, category, description, location, requires }))) : null;
   const byId = new Map(visible.map((r) => [r.id, r]));
   const aiResults = ai?.matches.flatMap((m) => (byId.has(m.id) ? [{ item: byId.get(m.id)!, why: m.why }] : []));
   const results = aiResults?.length ? aiResults : rankByQuery(visible, q);
+  const canList = actor?.role === "owner" || actor?.role === "admin";
+  const ownerSignInHref = "/login#sign-in";
 
   return (
-    <div className="space-y-6">
-      {actor.role === "external" && actor.identity_status !== "VERIFIED" && (
-        <p role="status" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
-          You can browse now. To book, a host lab manager must verify your ID.{" "}
-          <Link href="/me" className="font-semibold underline">{actor.identity_status === "PENDING" ? "Check or upload your ID →" : "Upload your ID →"}</Link>
+    <div className="marketplace-page">
+      {actor?.role === "external" && actor.identity_status !== "VERIFIED" && (
+        <p role="status" className="identity-notice">
+          You can browse now. A host lab manager must verify your ID before you can request access. {" "}
+          <Link href="/me">{actor.identity_status === "PENDING" ? "Check your verification" : "Upload your ID"}<ArrowRight size={15} /></Link>
         </p>
       )}
-      <div>
-        <h1 className="text-2xl font-bold">Find a resource</h1>
-        <p className="text-sm text-muted-foreground">Describe what you need in plain words, or filter.</p>
-      </div>
-      <form className="grid gap-3 md:grid-cols-[1fr_180px_auto_auto] md:items-end" role="search">
-        <Field label="What do you need?">
-          <Input name="q" defaultValue={q} placeholder="e.g. I need to cut acrylic for a drone frame" />
-        </Field>
-        <Field label="Category">
-          <select name="category" defaultValue={category} className={selectCls}>
-            <option value="">All</option>
-            <option value="equipment">Equipment</option>
-            <option value="computing">Computing</option>
-            <option value="media">Media</option>
-            <option value="space">Spaces</option>
-          </select>
-        </Field>
-        <label className="flex items-center gap-2 pb-2 text-sm">
-          <input type="checkbox" name="eligible" value="1" defaultChecked={eligibleOnly} /> Only ones I&apos;m eligible for
-        </label>
-        <Button type="submit">Search</Button>
-      </form>
 
-      {aiResults?.length ? (
-        <p className="text-sm text-muted-foreground">✦ Ranked by AI from your description ({ai!._model}). Eligibility badges are checked by LabLoop&apos;s rules, not the AI.</p>
-      ) : null}
-      {results.length === 0 && <p>No resources match. Try fewer words or clear the filters.</p>}
-      <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {results.map(({ item: r, why }) => (
-          <li key={r.id}>
-            <Card className="h-full">
-              <CardHeader>
-                <CardTitle><Link href={`/resources/${r.id}`} className="hover:underline">{r.name}</Link></CardTitle>
-                <p className="text-xs text-muted-foreground">{r.dept} · {r.location}</p>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                {r.photo && <img src={r.photo} alt="" className="h-32 w-full rounded-md object-cover" />}
-                <p className="line-clamp-2">{r.description}</p>
-                <div className="flex flex-wrap gap-1">
-                  {r.missing === 0
-                    ? <Badge variant="outline" className="border-emerald-400">✓ You&apos;re eligible</Badge>
-                    : <Badge variant="outline" className="border-red-400">✗ Needs: {r.requires}</Badge>}
-                  {r.high_demand && <Badge variant="secondary">High demand · fair-share rules</Badge>}
-                  {r.requires_supervision && <Badge variant="secondary">Supervised</Badge>}
-                  {r.status === "MAINTENANCE" && <Badge variant="destructive">Under maintenance</Badge>}
+      <section className="market-hero" aria-labelledby="market-title">
+        <div className="market-hero-copy">
+          <p className="market-eyebrow"><span className="eyebrow-dot" /> NORTHFIELD INSTITUTE · OPEN CAMPUS LABS</p>
+          <h1 id="market-title">Your campus has<br /><span>more to offer.</span></h1>
+          <p className="market-intro">Discover, share, and access laboratories, equipment, and workspaces across your campus.</p>
+          <form className="resource-search" role="search">
+            <Search size={20} aria-hidden="true" />
+            <label className="sr-only" htmlFor="resource-query">Search resources</label>
+            <input id="resource-query" name="q" defaultValue={q} placeholder="Search labs, equipment, or workspaces..." />
+            <label className="sr-only" htmlFor="resource-category">Resource category</label>
+            <select id="resource-category" name="category" defaultValue={category}>
+              <option value="">All resources</option>
+              <option value="equipment">Equipment</option>
+              <option value="computing">Computing</option>
+              <option value="media">Media</option>
+              <option value="space">Spaces</option>
+            </select>
+            {actor && <label className="eligible-filter"><input type="checkbox" name="eligible" value="1" defaultChecked={eligibleOnly} /> Only resources I&apos;m eligible for</label>}
+            <button type="submit">Search <ArrowRight size={16} /></button>
+          </form>
+          <div className="market-hero-actions">
+            <a className="button-primary" href="#resources">Explore resources <ArrowDownRight size={17} /></a>
+            <Link className="button-text" href={canList ? "/resources/new" : ownerSignInHref}>{canList ? "List a resource" : "For lab owners"} <ArrowUpRight size={15} /></Link>
+          </div>
+          <div className="market-trust-line"><ShieldCheck size={17} /> Verified access <span /> Clear booking rules <span /> Accountable hand-offs</div>
+        </div>
+        <div className="market-hero-visual" role="img" aria-label="A student working with equipment in a campus makerspace">
+          <div className="visual-image" />
+          <div className="visual-note"><span className="visual-note-icon"><Workflow size={18} /></span><span><strong>Room to make things happen</strong><small>Find the right space for your next idea</small></span><ArrowUpRight size={17} /></div>
+          <div className="visual-orbit orbit-one" /><div className="visual-orbit orbit-two" />
+        </div>
+      </section>
+
+      <section className="category-section" aria-labelledby="category-title">
+        <div className="section-topline"><div><p className="market-eyebrow">FIND YOUR STARTING POINT</p><h2 id="category-title">Explore by category</h2></div><p>Browse the tools and places already shared across campus.</p></div>
+        <div className="category-grid">
+          {categories.map(({ label, detail, value, icon: Icon, tone }) => (
+            <Link key={label} href={resourceHref(value)} className="category-card">
+              <span className={`category-icon tone-${tone}`}><Icon size={21} strokeWidth={1.8} /></span>
+              <span className="category-label"><strong>{label}</strong><small>{detail}</small></span>
+              <ArrowUpRight className="category-link-icon" size={17} />
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section id="resources" className="featured-section" aria-labelledby="featured-title">
+        <div className="section-topline"><div><p className="market-eyebrow">MADE TO BE SHARED</p><h2 id="featured-title">{q || category || eligibleOnly ? "Resources for your search" : "Find something worth making"}</h2></div><p>See requirements and booking details before you send a request.</p></div>
+        {aiResults?.length ? <p className="ai-ranking-note">✦ Ranked by AI from your description ({ai!._model}). Eligibility is checked against LabLoop&apos;s rules.</p> : null}
+        {results.length === 0 ? <div className="empty-resources"><Search size={22} /><strong>No resources match those filters.</strong><span>Try a broader search or clear the filters.</span><Link href="/">Clear filters <ArrowRight size={15} /></Link></div> : (
+          <div className="resource-grid">
+            {results.slice(0, 6).map(({ item: r, why }) => (
+              <article className="resource-card" key={r.id}>
+                <Link href={`/resources/${r.id}`} className="resource-image-link" aria-label={`View ${r.name}`}>
+                  {r.photo ? <img className="resource-image" src={r.photo} alt="" /> : <div className={`resource-image resource-placeholder placeholder-${r.category}`}><span><FlaskConical size={30} strokeWidth={1.5} /></span><small>{r.category}</small></div>}
+                  <span className={`resource-status ${r.status === "ACTIVE" ? "status-active" : "status-maintenance"}`}>{r.status === "ACTIVE" ? "Access by request" : "Under maintenance"}</span>
+                </Link>
+                <div className="resource-card-body">
+                  <div className="resource-type-row"><span>{r.category}</span>{r.high_demand && <span>High demand</span>}</div>
+                  <h3><Link href={`/resources/${r.id}`}>{r.name}</Link></h3>
+                  <p className="resource-location"><MapPin size={14} /> {r.dept} · {r.location}</p>
+                  <p className="resource-description">{r.description}</p>
+                  <div className="resource-meta">
+                    <span className={actor ? (r.missing === 0 && identityVerified ? "eligible-label" : "requirements-label") : "requirements-label"}>{actor ? (!identityVerified ? <>Identity verification needed</> : r.missing === 0 ? <><ShieldCheck size={14} /> Requirements met</> : <>Requirements apply{r.requires ? ` · ${r.requires}` : ""}</>) : <>Sign in to check eligibility</>}</span>
+                    {r.requires_supervision && <span>Supervised</span>}
+                  </div>
+                  {why && <p className="resource-match">{aiResults?.length ? "✦ " : ""}{why}</p>}
+                  <Link className="resource-details-link" href={`/resources/${r.id}`}>View details <ArrowRight size={16} /></Link>
                 </div>
-                {why && <p className="text-xs text-muted-foreground">{aiResults?.length ? "✦ " : ""}{why}</p>}
-              </CardContent>
-            </Card>
-          </li>
-        ))}
-      </ul>
+              </article>
+            ))}
+          </div>
+        )}
+        {results.length > 6 && <p className="results-count">Showing 6 of {results.length} matching resources. Refine your search above to narrow the list.</p>}
+      </section>
+
+      <section id="how-it-works" className="how-section" aria-labelledby="how-title">
+        <div className="section-topline"><div><p className="market-eyebrow">A CLEAR PATH FROM SEARCH TO SHARED</p><h2 id="how-title">Good work starts with the right tools.</h2></div><p>Every listing shows what you need, who can approve it, and how to return it well.</p></div>
+        <div className="steps-grid">
+          <article className="step-card"><span className="step-icon"><Search size={20} /></span><span className="step-index">01</span><h3>Discover a resource</h3><p>Search equipment, labs, and workspaces by name, category, or what you want to make.</p></article>
+          <article className="step-card"><span className="step-icon"><ShieldCheck size={20} /></span><span className="step-index">02</span><h3>Check and request</h3><p>Review availability, training, and access rules before requesting a time.</p></article>
+          <article className="step-card"><span className="step-icon"><Workflow size={20} /></span><span className="step-index">03</span><h3>Use and collaborate</h3><p>Check out with the lab team, make your work, then record a clear return.</p></article>
+        </div>
+      </section>
+
+      <section className="listing-cta" aria-labelledby="listing-title">
+        <div><p className="market-eyebrow">FOR LABS, COLLEGES & RESOURCE OWNERS</p><h2 id="listing-title">Make your resources work harder.</h2><p>Share underused campus equipment and spaces with people who are ready to put them to good use.</p></div>
+        <Link className="button-primary" href={canList ? "/resources/new" : ownerSignInHref}>{canList ? "List your resource" : "Owner sign in"} <ArrowRight size={17} /></Link>
+      </section>
     </div>
   );
 }

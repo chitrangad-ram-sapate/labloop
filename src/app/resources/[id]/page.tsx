@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { requestBooking } from "@/app/actions/booking";
 import { ActionForm } from "@/components/action-form";
@@ -12,7 +13,15 @@ import { sql } from "@/lib/db";
 import { fmtDay, fmtTime, istDateKey } from "@/lib/format";
 import { PURPOSES } from "@/lib/rules";
 
-export default async function ResourcePage({ params }: PageProps<"/resources/[id]">) {
+export default function ResourcePage({ params }: PageProps<"/resources/[id]">) {
+  return (
+    <Suspense fallback={<div className="resource-loading" role="status">Loading resource details…</div>}>
+      <ResourceContent params={params} />
+    </Suspense>
+  );
+}
+
+async function ResourceContent({ params }: { params: PageProps<"/resources/[id]">["params"] }) {
   const actor = await requireActor();
   const r = await getResource((await params).id);
   if (!r) notFound();

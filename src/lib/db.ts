@@ -1,10 +1,36 @@
 import postgres from "postgres";
 
-// One pool per server instance. prepare:false keeps it compatible with Supabase's transaction pooler too;
-// idle/lifetime limits recycle sockets so a dead pooler connection can never freeze the app.
+// One pool per server instance. prepare:false keeps this compatible with Supabase's
+// transaction pooler too; idle/lifetime limits recycle stale pooler connections.
 const g = globalThis as unknown as { sql?: postgres.Sql };
-export const sql = (g.sql ??= postgres(process.env.DATABASE_URL!, {
-  prepare: false, max: 5, idle_timeout: 20, max_lifetime: 60 * 10, connect_timeout: 10,
-}));
+const options = { prepare: false, max: 5, idle_timeout: 20, max_lifetime: 60 * 10, connect_timeout: 10 } as const;
+
+function unavailable(message: string): postgres.Sql {
+  const fail = () => { throw new Error(message); };
+  return new Proxy(fail, {
+    apply: fail,
+    get: fail,
+  }) as unknown as postgres.Sql;
+}
+
+function createClient(): postgres.Sql {
+  const connectionString = process.env.DATABASE_URL?.trim();
+  if (!connectionString) {
+    return unavailable("DATABASE_URL is not configured. Set it in .env.local to your PostgreSQL or Supabase database, then restart the Next.js server.");
+  }
+
+  try {
+    const url = new URL(connectionString);
+    if (!(url.protocol === "postgres:" || url.protocol === "postgresql:") || !url.hostname) {
+      return unavailable("DATABASE_URL must be a PostgreSQL connection URL with a host.");
+    }
+  } catch {
+    return unavailable("DATABASE_URL must be a valid PostgreSQL connection URL.");
+  }
+
+  return postgres(connectionString, options);
+}
+
+export const sql = (g.sql ??= createClient());
 
 export type Tx = postgres.TransactionSql | postgres.Sql;

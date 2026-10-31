@@ -9,8 +9,8 @@ import { sql } from "@/lib/db";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "LabLoop",
-  description: "Safely share a college's idle labs, equipment and spaces with verified students and startups.",
+  title: "LabLoop | Campus resources, made shareable",
+  description: "Discover, share, and access laboratories, equipment, and workspaces across your campus.",
 };
 
 async function Nav() {
@@ -20,38 +20,44 @@ async function Nav() {
     : [{ n: 0 }];
   const staff = actor && ["owner", "manager", "admin"].includes(actor.role);
   const links = actor ? [
-    { href: "/", label: "Find resources" },
+    { href: "/", label: "Discover" },
+    { href: "/?category=equipment", label: "Laboratories" },
+    { href: "/?category=equipment", label: "Equipment" },
+    { href: "/?category=space", label: "Workspaces" },
+    { href: "/#how-it-works", label: "How it works" },
     { href: "/bookings", label: "My bookings" },
-    { href: "/me", label: "My passport" },
     ...(staff ? [{ href: "/manage", label: "Manage" }] : []),
     ...(actor.role === "admin" ? [{ href: "/admin", label: "Admin" }] : []),
   ] : [
-    { href: "/login#how-it-works", label: "How it works" },
-    { href: "/login#shared-resources", label: "The collection" },
-    { href: "/login#verified-access", label: "Our approach" },
+    { href: "/", label: "Discover" },
+    { href: "/?category=space", label: "Laboratories" },
+    { href: "/?category=equipment", label: "Equipment" },
+    { href: "/?category=space", label: "Workspaces" },
+    { href: "/#how-it-works", label: "How it works" },
   ];
 
   return (
     <>
       <div className="nav-links nav-links-desktop">
-        {links.map((item) => <Link href={item.href} key={item.href}>{item.label}</Link>)}
+        {links.map((item, index) => <Link href={item.href} key={`${item.label}-${index}`}>{item.label}</Link>)}
       </div>
       <div className="nav-actions nav-actions-desktop">
         {actor ? <>
           <Link href="/notifications" className="nav-notifications" aria-label={`Notifications, ${unread} unread`}>Notifications{unread > 0 && <span>{unread}</span>}</Link>
-          <span className="nav-user">{actor.full_name} <i>·</i> {actor.role}</span>
+          <Link href="/me" className="nav-account">{actor.full_name}</Link>
           <form action={logout}><button className="nav-signout">Sign out</button></form>
-        </> : <Link href="/signup" className="nav-join">Get started <span aria-hidden="true">↗</span></Link>}
+        </> : <><Link href="/login#sign-in" className="nav-signin">Sign in</Link><Link href="/signup" className="nav-join">Get started <span aria-hidden="true">↗</span></Link></>}
       </div>
       <details className="mobile-menu">
         <summary aria-label="Open navigation menu"><span className="menu-lines" aria-hidden="true"><i /><i /></span><span>Menu</span></summary>
         <div className="mobile-menu-panel">
-          {links.map((item) => <Link href={item.href} key={item.href}>{item.label}</Link>)}
+          {links.map((item, index) => <Link href={item.href} key={`${item.label}-${index}`}>{item.label}</Link>)}
           {actor ? <>
+            <Link href="/me">My passport</Link>
             <Link href="/notifications">Notifications {unread > 0 && <span className="mobile-unread">{unread}</span>}</Link>
             <span className="mobile-user">{actor.full_name} · {actor.role}</span>
             <form action={logout}><button className="nav-signout">Sign out</button></form>
-          </> : <Link href="/signup" className="nav-join">Get started <span aria-hidden="true">↗</span></Link>}
+          </> : <><Link href="/login#sign-in" className="mobile-signin">Sign in</Link><Link href="/signup" className="nav-join">Get started <span aria-hidden="true">↗</span></Link></>}
         </div>
       </details>
     </>
@@ -65,23 +71,23 @@ async function FlashMessage() {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className="h-full antialiased">
+    <html lang="en" className="h-full antialiased" data-scroll-behavior="smooth">
       <body className="min-h-full flex flex-col bg-background text-foreground">
-        <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:p-2">Skip to content</a>
+        <a href="#main" className="skip-link">Skip to content</a>
         <header className="site-header">
           <nav aria-label="Main" className="site-nav">
-            <Link href="/" className="site-brand" aria-label="LabLoop home"><span className="brand-mark" aria-hidden="true">L</span><span>labloop<span className="brand-period">.</span></span></Link>
+            <Link href="/" className="site-brand" aria-label="LabLoop home"><span className="brand-mark" aria-hidden="true"><span /><span /></span><span>labloop<span className="brand-period">.</span></span></Link>
             <Suspense><Nav /></Suspense>
           </nav>
         </header>
         <main id="main" className="app-main flex-1">
           <Suspense><FlashMessage /></Suspense>
-          <Suspense fallback={<p className="mx-auto max-w-6xl px-4 py-8 text-muted-foreground">Loading…</p>}>{children}</Suspense>
+          <Suspense fallback={<p className="loading-message">Loading LabLoop…</p>}>{children}</Suspense>
         </main>
         <footer className="site-footer">
-          <Link href="/" className="footer-brand">labloop<span>.</span></Link>
+          <div className="footer-brand-wrap"><Link href="/" className="footer-brand">labloop<span>.</span></Link><small>Campus resources, made shareable.</small></div>
           <p>Shared spaces for bigger ideas.<br /><small>Northfield Institute of Technology</small></p>
-          <div className="footer-links"><Link href="/login">Sign in</Link><Link href="/signup">Create account</Link></div>
+          <div className="footer-links"><Link href="/">Discover resources</Link><Link href="/login#how-it-works">How it works</Link><Link href="/signup">Create account</Link></div>
           <small className="footer-note">Prototype · all people and organisations shown are fictional</small>
         </footer>
       </body>
