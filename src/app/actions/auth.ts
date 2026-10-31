@@ -21,23 +21,27 @@ function safeReturnPath(value: string) {
 export async function login(_: ActionResult, fd: FormData) {
   return attempt(async () => {
     const email = need(fd, "email", "your email").toLowerCase();
-    const lookup = await getFirebaseDb().collection("email_lookup").doc(emailKey(email)).get();
+    const db = getFirebaseDb();
+    const emailRef = db.collection("email_lookup").doc(emailKey(email));
+    const lookup = await emailRef.get();
     const profileId = lookup.get("profile_id");
-    const p = typeof profileId === "string" ? await getFirebaseDb().collection("profiles").doc(profileId).get() : null;
+    let p = typeof profileId === "string" ? await db.collection("profiles").doc(profileId).get() : null;
+    // Older imports may contain profiles without the companion email_lookup document.
+    // Search by their normalized email and repair the index only after password proof.
+    if (!p?.exists || String(p.get("email") ?? "").toLowerCase() !== email) {
+      const matches = await db.collection("profiles").where("email", "==", email).limit(2).get();
+      p = matches.size === 1 ? matches.docs[0] : null;
+    }
     const data = p?.exists ? p.data() : null;
     if (!data || !checkPassword(str(fd, "password"), String(data.password_hash ?? ""))) throw new Error("Email or password is incorrect.");
+    await db.runTransaction(async (tx) => {
+      const currentLookup = await tx.get(emailRef);
+      if (!currentLookup.exists) tx.create(emailRef, { profile_id: p!.id });
+      else if (currentLookup.get("profile_id") !== p!.id) throw new Error("Account lookup needs administrator review.");
+    });
     await startSession(p!.id);
     redirect(safeReturnPath(str(fd, "redirectTo")));
   });
-}
-
-export async function demoLogin(email: string, fd: FormData) {
-  if (process.env.DEMO_MODE !== "true") throw new Error("Demo sign-in is disabled.");
-  const lookup = await getFirebaseDb().collection("email_lookup").doc(emailKey(email)).get();
-  const profileId = lookup.get("profile_id");
-  if (typeof profileId !== "string") throw new Error("Demo data missing. Ask an admin to reset it.");
-  await startSession(profileId);
-  redirect(safeReturnPath(str(fd, "redirectTo")));
 }
 
 export async function logout() {
@@ -66,8 +70,11 @@ export async function signup(_: ActionResult, fd: FormData) {
     const profileRef = db.collection("profiles").doc(id);
     try {
       await db.runTransaction(async (tx) => {
-        const duplicate = await tx.get(emailRef);
-        if (duplicate.exists) throw new Error("An account with this email already exists.");
+        const [duplicate, matchingProfiles] = await Promise.all([
+          tx.get(emailRef),
+          tx.get(db.collection("profiles").where("email", "==", email).limit(1)),
+        ]);
+        if (duplicate.exists || !matchingProfiles.empty) throw new Error("An account with this email already exists.");
         tx.create(profileRef, {
           email,
           password_hash: hashPassword(password),

@@ -9,6 +9,7 @@
     "lint": "eslint",
     "firebase:check": "node --conditions=react-server --import tsx scripts/check-firebase.mts",
     "firebase:bootstrap": "node --conditions=react-server --import tsx scripts/bootstrap-firebase.mts",
+    "firebase:create-admin": "node --conditions=react-server --import tsx scripts/create-admin-firebase.mts",
     "test": "vitest run"
   },
   "dependencies": {

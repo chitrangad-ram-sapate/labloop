@@ -28,7 +28,12 @@ export function SignInTrigger({ children, className, returnTo }: { children: Rea
   );
 }
 
-export function SignInExperience({ authenticated, loginAction }: { authenticated: boolean; loginAction: LoginAction }) {
+export function SignInExperience(props: { authenticated: boolean; loginAction: LoginAction }) {
+  const pathname = usePathname();
+  return <SignInDialog key={pathname} {...props} />;
+}
+
+function SignInDialog({ authenticated, loginAction }: { authenticated: boolean; loginAction: LoginAction }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [redirectTo, setRedirectTo] = useState("/");
@@ -58,7 +63,7 @@ export function SignInExperience({ authenticated, loginAction }: { authenticated
     };
     window.addEventListener(OPEN_EVENT, handleOpen);
     return () => window.removeEventListener(OPEN_EVENT, handleOpen);
-  }, [authenticated]);
+  }, [authenticated, pathname]);
 
   useEffect(() => {
     if (authenticated || pathname !== "/") return;

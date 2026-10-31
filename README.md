@@ -19,7 +19,9 @@ This repository does not create a Firebase project, provision accounts, copy a P
 5. Create `.env.local` in the repository root from `.env.example` and add the Firebase project ID, a unique `SESSION_SECRET`, and local credentials as described below.
 6. Add the same server-only variables to Render's environment settings, then redeploy the service.
 
-For a **brand-new, empty** Firestore project, also set the one-time `LABLOOP_ADMIN_EMAIL`, `LABLOOP_ADMIN_PASSWORD`, `LABLOOP_ADMIN_NAME`, `LABLOOP_HOST_ORG_NAME`, and `LABLOOP_HOST_EMAIL_DOMAIN` values in `.env.local`, then run `npm.cmd run firebase:bootstrap`. It creates the first admin, host organization, and four departments only when those collections are empty. It refuses to run if identity or organization data already exists. Remove the five `LABLOOP_*` bootstrap values afterward. Never run this against a project with data you need to keep.
+For a **brand-new, empty** Firestore project, set the one-time `LABLOOP_ADMIN_EMAIL`, `LABLOOP_ADMIN_PASSWORD`, `LABLOOP_ADMIN_NAME`, `LABLOOP_HOST_ORG_NAME`, and `LABLOOP_HOST_EMAIL_DOMAIN` values in `.env.local`, then run `npm.cmd run firebase:bootstrap`. It creates the first admin, host organization, and four departments only when the protected collections are empty. It refuses to run if it finds LabLoop business data. Remove the bootstrap values afterward. Never run this against a project with data you need to keep.
+
+For an already populated project that has exactly one active `HOST` organization for the configured host domain but no admin profile, run `npm.cmd run firebase:create-admin` with `LABLOOP_ADMIN_EMAIL`, `LABLOOP_ADMIN_PASSWORD`, `LABLOOP_ADMIN_NAME`, and `LABLOOP_HOST_EMAIL_DOMAIN` set in the private `.env.local`. This only creates a new admin profile and its `email_lookup` document; it refuses to overwrite an existing account or create a second admin. It does not create or change campus records. If the project contains an admin already, use that admin's account recovery process. Run this only against the intended Firebase project.
 
 ## Local Windows setup
 
@@ -46,7 +48,7 @@ LABLOOP_HOST_EMAIL_DOMAIN=your-campus-domain.edu
 
 These are names and format examples only; replace the values yourself. Keep `.env.local` private. The project `.gitignore` ignores `.env*` files. On Render, set `FIREBASE_PROJECT_ID`, `FIREBASE_SERVICE_ACCOUNT_JSON` (the full service-account JSON as a secret environment value), `SESSION_SECRET`, and `CRON_SECRET` in the service's Environment page. Never share the key with me.
 
-After completing the one-time bootstrap settings above, create the initial admin and verify configuration:
+For a new empty project, after completing the bootstrap settings above, initialize the records and verify configuration:
 
 ```powershell
 npm.cmd install
@@ -54,6 +56,8 @@ npm.cmd run firebase:bootstrap
 npm.cmd run firebase:check
 npm.cmd run dev
 ```
+
+For an existing project instead, use `npm.cmd run firebase:create-admin` in place of `firebase:bootstrap`. Create a regular user through `/signup` after confirming the matching active organization exists. The app has no seeded demo-account data and does not support passwordless demo login; `meera@rce.demo` is only mentioned in an old implementation plan, so its presence and password are unverified. Passwords are stored as scrypt hashes and cannot be read back from Firestore.
 
 `firebase:check` checks for credentials and Firestore connectivity without printing key material. It lists top-level collections and warns when the core data collections are missing. Restart `next dev` after changing environment variables.
 

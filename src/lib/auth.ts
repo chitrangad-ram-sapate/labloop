@@ -1,7 +1,8 @@
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { fromFirestore, getFirebaseDb } from "./firebase";
+export { checkPassword, hashPassword } from "./password";
 
 export type Role = "user" | "external" | "manager" | "owner" | "admin";
 export type Actor = {
@@ -21,16 +22,6 @@ const COOKIE = "labloop_session";
 const sessionSecretHint = process.env.NODE_ENV === "production"
   ? "Set SESSION_SECRET in the hosting service's environment settings, then redeploy or restart the service."
   : "Set it in .env.local, then restart the Next.js server.";
-
-export function hashPassword(pw: string) {
-  const salt = randomBytes(16).toString("hex");
-  return `${salt}:${scryptSync(pw, salt, 32).toString("hex")}`;
-}
-
-export function checkPassword(pw: string, stored: string) {
-  const [salt, hash] = stored.split(":");
-  return timingSafeEqual(Buffer.from(hash, "hex"), scryptSync(pw, salt, 32));
-}
 
 const sign = (id: string) => {
   const secret = process.env.SESSION_SECRET?.trim();
