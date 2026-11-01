@@ -1,6 +1,9 @@
 # LabLoop
 
 LabLoop is a campus resource sharing app. Students discover equipment and spaces, verify eligibility, hold inventory in a short lived cart, request bookings, and record condition reports. Owners and managers review requests and returns.
+To access our live link please find https://labloop-ierl.onrender.com
+user name : admin@nift.demo
+password : LabLoop-Maple-River-47!
 
 ## Backend status
 
